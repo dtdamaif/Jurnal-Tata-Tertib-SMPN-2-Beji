@@ -14,7 +14,7 @@ interface TeacherFormViewProps {
   currentGuru: Guru | null;
   onLoginGuru: (nip: string, pass: string) => boolean;
   onLogoutGuru: () => void;
-  onSubmitPelanggaran: (newLog: LogPelanggaran) => void;
+  onSubmitPelanggaran: (newLog: LogPelanggaran, fileObj?: { base64: string; mimeType: string; filename: string }) => void;
 }
 
 export const TeacherFormView: React.FC<TeacherFormViewProps> = ({
@@ -215,7 +215,13 @@ export const TeacherFormView: React.FC<TeacherFormViewProps> = ({
         timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
       };
 
-      onSubmitPelanggaran(newLog);
+      const filePayload = fotoBase64 ? {
+        base64: fotoBase64.includes(',') ? fotoBase64.split(',')[1] : fotoBase64,
+        mimeType: 'image/jpeg',
+        filename: fotoFileName || `bukti_${selectedNisn}_${Date.now()}.jpg`
+      } : undefined;
+
+      onSubmitPelanggaran(newLog, filePayload);
       setIsSubmitting(false);
       setSuccessMessage(`Berhasil mencatat pelanggaran untuk ${newLog.namaMurid} (+${totalPoin} Poin)! Sanksi: "${sanksiPreview.sanksi}". Data tersimpan ke Spreadsheet.`);
 

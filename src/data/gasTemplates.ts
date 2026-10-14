@@ -26,15 +26,65 @@ const CONFIG = {
 };
 
 /**
- * Entry point Web App
+ * Entry point Web App (Mendukung Tampilan HTML & Endpoint REST API JSON)
  */
 function doGet(e) {
   initDatabase();
+
+  // Jika dipanggil via REST API (contoh: ?action=getMurid atau ?action=getGuru)
+  if (e && e.parameter && e.parameter.action) {
+    const action = e.parameter.action;
+    let result = {};
+    if (action === 'getMurid') result = syncMuridFromSpreadsheet();
+    else if (action === 'getGuru') result = syncGuruFromSpreadsheet();
+    else if (action === 'getLeaderboard') result = { success: true, data: getPublicLeaderboard() };
+    else if (action === 'getRef') result = { success: true, data: getRefPelanggaran() };
+    else result = { success: false, message: 'Action API tidak dikenal' };
+
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   const template = HtmlService.createTemplateFromFile('Index');
   return template.evaluate()
     .setTitle('Jurnal Tata Tertib SMPN 2 Beji')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Handle POST request dari Web App / React (Submit Pelanggaran, Foto Drive, Update Data)
+ */
+function doPost(e) {
+  try {
+    let postData;
+    if (e.postData && e.postData.contents) {
+      postData = JSON.parse(e.postData.contents);
+    } else {
+      postData = e.parameter;
+    }
+
+    const action = postData.action;
+    let result = {};
+
+    if (action === 'submitPelanggaran') {
+      result = submitPelanggaran(postData.payload, postData.fileObj);
+    } else if (action === 'saveMurid') {
+      result = saveMurid(postData.payload);
+    } else if (action === 'saveRefPelanggaran') {
+      result = saveRefPelanggaran(postData.payload);
+    } else if (action === 'deleteRefPelanggaran') {
+      result = deleteRefPelanggaran(postData.id);
+    } else {
+      result = { success: false, message: 'Action POST tidak dikenal: ' + action };
+    }
+
+    return ContentService.createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ success: false, message: 'Error server GAS: ' + err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
 }
 
 /**

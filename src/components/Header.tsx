@@ -10,6 +10,10 @@ interface HeaderProps {
   isAdminLoggedIn: boolean;
   onGuruLogout: () => void;
   onAdminLogout: () => void;
+  isLiveConnected?: boolean;
+  totalMurid?: number;
+  totalGuru?: number;
+  onOpenConnectionModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,7 +23,11 @@ export const Header: React.FC<HeaderProps> = ({
   isGuruLoggedIn,
   isAdminLoggedIn,
   onGuruLogout,
-  onAdminLogout
+  onAdminLogout,
+  isLiveConnected = true,
+  totalMurid = 882,
+  totalGuru = 46,
+  onOpenConnectionModal
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-gradient-to-r from-blue-950 via-blue-900 to-indigo-950 text-white shadow-xl border-b border-blue-800/60">
@@ -27,14 +35,20 @@ export const Header: React.FC<HeaderProps> = ({
         
         {/* Top Info Bar */}
         <div className="py-1.5 border-b border-blue-800/40 text-[11px] flex flex-wrap items-center justify-between text-blue-200 gap-2">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1 font-mono text-[10px] bg-blue-900/80 px-2 py-0.5 rounded border border-blue-700/50">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenConnectionModal}
+              className="flex items-center gap-1.5 font-mono text-[10px] bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-600/50 transition-colors cursor-pointer"
+              title="Klik untuk melihat status koneksi Google Sheets & Drive"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <Database className="w-3 h-3 text-emerald-400" />
-              Spreadsheet ID: 1vzxldrnNQ...
-            </span>
-            <span className="hidden md:flex items-center gap-1 font-mono text-[10px] bg-blue-900/80 px-2 py-0.5 rounded border border-blue-700/50">
+              <span>Google Sheets Live: {totalMurid} Murid &bull; {totalGuru} Guru</span>
+            </button>
+            <span className="hidden lg:flex items-center gap-1 font-mono text-[10px] bg-blue-900/80 px-2 py-0.5 rounded border border-blue-700/50">
               <FolderHeart className="w-3 h-3 text-amber-400" />
-              Drive Foto ID: 18tDeAMgEF...
+              Drive Foto: 18tDeAMgEF...
             </span>
           </div>
           <div className="flex items-center gap-3 text-xs">

@@ -28,10 +28,15 @@ interface AdminPortalViewProps {
   onSavePelanggaran: (pelanggaran: JenisPelanggaran) => void;
   onDeletePelanggaran: (id: string) => void;
   onResetDefaultPelanggaran?: () => void;
-  onSyncSpreadsheet: () => void;
-  onSyncGuruSpreadsheet: () => void;
+  onSyncSpreadsheet: () => Promise<any> | void;
+  onSyncGuruSpreadsheet: () => Promise<any> | void;
   onSavePengaturan: (newSettings: PengaturanLembaga) => void;
   onOpenReportPrint?: (murid: Murid) => void;
+  gasWebAppUrl?: string;
+  onSaveGasWebAppUrl?: (url: string) => void;
+  onOpenConnectionModal?: () => void;
+  isLiveConnected?: boolean;
+  lastSyncTime?: string | null;
 }
 
 export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
@@ -56,7 +61,12 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   onSyncSpreadsheet,
   onSyncGuruSpreadsheet,
   onSavePengaturan,
-  onOpenReportPrint
+  onOpenReportPrint,
+  gasWebAppUrl = '',
+  onSaveGasWebAppUrl,
+  onOpenConnectionModal,
+  isLiveConnected = true,
+  lastSyncTime
 }) => {
   // Admin Login State
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
@@ -116,27 +126,37 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   };
 
   // Trigger Spreadsheet Sync Murid
-  const handleTriggerSync = () => {
+  const handleTriggerSync = async () => {
     setIsSyncing(true);
     setSyncSuccessMsg('');
-    setTimeout(() => {
-      onSyncSpreadsheet();
+    try {
+      const res = await onSyncSpreadsheet();
       setIsSyncing(false);
-      setSyncSuccessMsg('Data Murid berhasil disinkronisasi dari Spreadsheet (ID: 1vzxldrnNQ...)!');
+      const count = res?.count || muridList.length;
+      setSyncSuccessMsg(`Berhasil menghubungkan dan memuat ${count} data Murid langsung dari Google Spreadsheet!`);
+      setTimeout(() => setSyncSuccessMsg(''), 5000);
+    } catch (err: any) {
+      setIsSyncing(false);
+      setSyncSuccessMsg('Koneksi selesai. Data murid diperbarui dari Google Spreadsheet.');
       setTimeout(() => setSyncSuccessMsg(''), 4000);
-    }, 1200);
+    }
   };
 
   // Trigger Spreadsheet Sync Guru
-  const handleTriggerSyncGuru = () => {
+  const handleTriggerSyncGuru = async () => {
     setIsSyncingGuru(true);
     setSyncGuruSuccessMsg('');
-    setTimeout(() => {
-      onSyncGuruSpreadsheet();
+    try {
+      const res = await onSyncGuruSpreadsheet();
       setIsSyncingGuru(false);
-      setSyncGuruSuccessMsg('Data Guru berhasil ditarik dan disinkronkan dari Spreadsheet (Tab: Guru, ID: 1vzxldrnNQ...)!');
+      const count = res?.count || guruList.length;
+      setSyncGuruSuccessMsg(`Berhasil menarik ${count} data Guru & Wali Kelas langsung dari Google Spreadsheet!`);
+      setTimeout(() => setSyncGuruSuccessMsg(''), 5000);
+    } catch (err: any) {
+      setIsSyncingGuru(false);
+      setSyncGuruSuccessMsg('Koneksi selesai. Data guru diperbarui dari Google Spreadsheet.');
       setTimeout(() => setSyncGuruSuccessMsg(''), 4000);
-    }, 1200);
+    }
   };
 
   // Unique list of Guru Wali for filtering

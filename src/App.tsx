@@ -10,6 +10,7 @@ import { TeacherFormView } from './components/TeacherFormView';
 import { AdminPortalView } from './components/AdminPortalView';
 import { GasDocsView } from './components/GasDocsView';
 import { OfficialPrintModal } from './components/OfficialPrintModal';
+import { ConnectionModal } from './components/ConnectionModal';
 import { 
   AdminUser, Guru, Murid, JenisPelanggaran, LogPelanggaran, PengaturanLembaga 
 } from './types';
@@ -17,6 +18,14 @@ import {
   INITIAL_ADMINS, INITIAL_GURU, INITIAL_MURID, 
   INITIAL_PELANGGARAN_REF, INITIAL_LOGS, INITIAL_PENGATURAN, GAS_CONFIG 
 } from './data/initialData';
+import { 
+  fetchLiveMurid, 
+  fetchLiveGuru, 
+  fetchLiveLogs, 
+  sendViolationToGAS,
+  SPREADSHEET_ID,
+  DRIVE_FOLDER_ID
+} from './services/googleSheetsService';
 
 export default function App() {
   // Navigation active tab
@@ -53,6 +62,17 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_PENGATURAN;
   });
 
+  // Google Apps Script Web App Deployment URL
+  const [gasWebAppUrl, setGasWebAppUrl] = useState<string>(() => {
+    return localStorage.getItem('smpn2beji_gas_url') || '';
+  });
+
+  // Real-time Connection State
+  const [isLiveConnected, setIsLiveConnected] = useState<boolean>(true);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [isSyncingAll, setIsSyncingAll] = useState<boolean>(false);
+  const [connectionModalOpen, setConnectionModalOpen] = useState<boolean>(false);
+
   // Active Sessions
   const [currentGuru, setCurrentGuru] = useState<Guru | null>(() => {
     const saved = localStorage.getItem('smpn2beji_session_guru');
@@ -66,6 +86,52 @@ export default function App() {
 
   // Printable Report Modal
   const [printMurid, setPrintMurid] = useState<Murid | null>(null);
+
+  // Auto-fetch Real Data from Google Spreadsheet on Start
+  useEffect(() => {
+    let isMounted = true;
+    async function loadSpreadsheetData() {
+      setIsSyncingAll(true);
+      try {
+        // 1. Fetch live teachers (45+ guru dari tab "Guru")
+        const { guruList: liveGurus } = await fetchLiveGuru();
+        if (isMounted && liveGurus.length > 0) {
+          setGuruList(liveGurus);
+        }
+
+        // 2. Fetch live students (882 murid dari tab "Murid")
+        const { muridList: liveMurids } = await fetchLiveMurid(liveGurus);
+        if (isMounted && liveMurids.length > 0) {
+          setMuridList(liveMurids);
+        }
+
+        // 3. Fetch live violation logs dari tab "Log_Pelanggaran"
+        const { logsList: liveLogs } = await fetchLiveLogs();
+        if (isMounted && liveLogs.length > 0) {
+          setLogs(prev => {
+            const existingIds = new Set(prev.map(l => l.id));
+            const newOnes = liveLogs.filter(l => !existingIds.has(l.id));
+            return [...newOnes, ...prev];
+          });
+        }
+
+        if (isMounted) {
+          setIsLiveConnected(true);
+          const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+          setLastSyncTime(nowStr);
+        }
+      } catch (err) {
+        console.warn('Auto live spreadsheet load note:', err);
+      } finally {
+        if (isMounted) {
+          setIsSyncingAll(false);
+        }
+      }
+    }
+
+    loadSpreadsheetData();
+    return () => { isMounted = false; };
+  }, []);
 
   // Sync to LocalStorage
   useEffect(() => {
@@ -93,6 +159,10 @@ export default function App() {
   }, [pengaturan]);
 
   useEffect(() => {
+    localStorage.setItem('smpn2beji_gas_url', gasWebAppUrl);
+  }, [gasWebAppUrl]);
+
+  useEffect(() => {
     if (currentGuru) {
       localStorage.setItem('smpn2beji_session_guru', JSON.stringify(currentGuru));
     } else {
@@ -108,13 +178,20 @@ export default function App() {
     }
   }, [currentAdmin]);
 
-  // Auth Guru
+  // Auth Guru (Support NIP and password 'smpn2beji' or 'Smpn2Beji')
   const handleLoginGuru = (nip: string, pass: string): boolean => {
-    const found = guruList.find(g => g.nip.trim() === nip.trim() && g.status === 'Aktif');
-    // Allow either the default password Smpn2Beji or standard match
-    if (found && (pass === GAS_CONFIG.guruDefaultPassword || pass === 'Smpn2Beji' || pass === 'admin')) {
-      setCurrentGuru(found);
-      return true;
+    const cleanNip = nip.trim();
+    const cleanPass = pass.trim().toLowerCase();
+    const found = guruList.find(g => g.nip.trim() === cleanNip && g.status === 'Aktif');
+    if (found) {
+      if (
+        cleanPass === 'smpn2beji' || 
+        pass === GAS_CONFIG.guruDefaultPassword || 
+        pass === 'admin'
+      ) {
+        setCurrentGuru(found);
+        return true;
+      }
     }
     return false;
   };
@@ -125,7 +202,6 @@ export default function App() {
 
   // Auth Admin
   const handleLoginAdmin = (pass: string): boolean => {
-    // Check against default password or configured admin
     if (pass === GAS_CONFIG.adminDefaultPassword || pass === '@smpn2beji' || pass === 'admin') {
       setCurrentAdmin(admins[0] || INITIAL_ADMINS[0]);
       return true;
@@ -138,8 +214,23 @@ export default function App() {
   };
 
   // Submit Violation by Teacher
-  const handleSubmitPelanggaran = (newLog: LogPelanggaran) => {
+  const handleSubmitPelanggaran = async (
+    newLog: LogPelanggaran, 
+    fileObj?: { base64: string; mimeType: string; filename: string }
+  ) => {
     setLogs(prev => [newLog, ...prev]);
+
+    // Jika Web App URL Google Apps Script disetel, kirim real-time ke Google Drive & Sheets
+    if (gasWebAppUrl && gasWebAppUrl.trim().startsWith('http')) {
+      try {
+        const res = await sendViolationToGAS(gasWebAppUrl, newLog, fileObj);
+        if (res.success && res.fotoUrl) {
+          setLogs(prev => prev.map(l => l.id === newLog.id ? { ...l, fotoBuktiUrl: res.fotoUrl! } : l));
+        }
+      } catch (err) {
+        console.error('Failed to send to Google Apps Script:', err);
+      }
+    }
   };
 
   // Fitur A: CRUD Admin
@@ -176,7 +267,7 @@ export default function App() {
     setGuruList(prev => prev.filter(g => g.id !== id));
   };
 
-  // Fitur C: CRUD Murid & Sinkronisasi
+  // Fitur C: CRUD Murid & Real-time Live Sync from Google Spreadsheet
   const handleSaveMurid = (murid: Murid) => {
     setMuridList(prev => {
       const idx = prev.findIndex(m => m.id === murid.id);
@@ -193,36 +284,74 @@ export default function App() {
     setMuridList(prev => prev.filter(m => m.id !== id));
   };
 
-  const handleSyncSpreadsheet = () => {
-    // Tarik data murid terbaru dari Spreadsheet ID: 1vzxldrnNQEDkZBQfPiA7WH8K3e9eF6NlqdMmgy4nj10
-    const sampleAdditionalStudents: Murid[] = [
-      { id: 'MUR-021', nisn: '0071234586', nis: '22906', nama: 'Umar Abdullah', kelas: '9B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Nurul Hidayati, S.Si.' },
-      { id: 'MUR-022', nisn: '0071234587', nis: '22907', nama: 'Vina Panduwinata', kelas: '9B', jenisKelamin: 'P', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Bagus Pratama, S.Pd.' },
-      { id: 'MUR-023', nisn: '0081234588', nis: '23808', nama: 'Wahyu Hidayat', kelas: '8C', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.', guruWali: 'Dewi Lestari, S.Pd.' },
-      { id: 'MUR-024', nisn: '0091234589', nis: '24709', nama: 'Zahra Novitasari', kelas: '7C', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Ahmad Fauzi, S.Pd.' }
-    ];
-
-    setMuridList(prev => {
-      const existingNisns = new Set(prev.map(m => m.nisn));
-      const toAdd = sampleAdditionalStudents.filter(s => !existingNisns.has(s.nisn));
-      return [...prev, ...toAdd];
-    });
+  // Live Tarik Data Murid dari Spreadsheet ID: 1vzxldrnNQEDkZBQfPiA7WH8K3e9eF6NlqdMmgy4nj10
+  const handleSyncSpreadsheet = async () => {
+    setIsSyncingAll(true);
+    try {
+      const { muridList: liveMurids } = await fetchLiveMurid(guruList);
+      if (liveMurids.length > 0) {
+        setMuridList(liveMurids);
+        setIsLiveConnected(true);
+        const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        setLastSyncTime(nowStr);
+        return { success: true, count: liveMurids.length };
+      }
+      return { success: false, message: 'Tidak ada data murid di sheet' };
+    } catch (err: any) {
+      console.error('Error syncing murid from sheet:', err);
+      throw err;
+    } finally {
+      setIsSyncingAll(false);
+    }
   };
 
-  const handleSyncGuruSpreadsheet = () => {
-    // Tarik data guru terbaru dari Spreadsheet Tab "Guru"
-    const sampleAdditionalGuru: Guru[] = [
-      { id: 'GUR-011', nip: '198403152009022003', nama: 'Indah Kusuma, S.Pd.', jabatan: 'Wali Kelas 7D & Guru IPA', kelasWali: '7D', noHp: '081234567811', status: 'Aktif' },
-      { id: 'GUR-012', nip: '197906202008011007', nama: 'Bambang Sugeng, M.Pd.', jabatan: 'Wali Kelas 8E & Guru Bhs. Inggris', kelasWali: '8E', noHp: '081234567812', status: 'Aktif' },
-      { id: 'GUR-013', nip: '198811122014022005', nama: 'Rina Maryana, S.Pd.', jabatan: 'Wali Kelas 9D & Guru Matematika', kelasWali: '9D', noHp: '081234567813', status: 'Aktif' },
-      { id: 'GUR-014', nip: '197501012003121008', nama: 'Drs. H. Mulyono', jabatan: 'Guru Pembimbing BK', kelasWali: 'Guru BK', noHp: '081234567814', status: 'Aktif' }
-    ];
+  // Live Tarik Data Guru dari Spreadsheet Tab "Guru"
+  const handleSyncGuruSpreadsheet = async () => {
+    setIsSyncingAll(true);
+    try {
+      const { guruList: liveGurus } = await fetchLiveGuru();
+      if (liveGurus.length > 0) {
+        setGuruList(liveGurus);
+        setIsLiveConnected(true);
+        const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        setLastSyncTime(nowStr);
+        return { success: true, count: liveGurus.length };
+      }
+      return { success: false, message: 'Tidak ada data guru di sheet' };
+    } catch (err: any) {
+      console.error('Error syncing guru from sheet:', err);
+      throw err;
+    } finally {
+      setIsSyncingAll(false);
+    }
+  };
 
-    setGuruList(prev => {
-      const existingNips = new Set(prev.map(g => g.nip));
-      const toAdd = sampleAdditionalGuru.filter(g => !existingNips.has(g.nip));
-      return [...prev, ...toAdd];
-    });
+  // Tarik Seluruh Data Lengkap (Murid, Guru, Logs)
+  const handleSyncAll = async () => {
+    setIsSyncingAll(true);
+    try {
+      const [gurusRes, muridsRes, logsRes] = await Promise.all([
+        fetchLiveGuru(),
+        fetchLiveMurid(guruList),
+        fetchLiveLogs()
+      ]);
+
+      if (gurusRes.guruList.length > 0) setGuruList(gurusRes.guruList);
+      if (muridsRes.muridList.length > 0) setMuridList(muridsRes.muridList);
+      if (logsRes.logsList.length > 0) {
+        setLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const newOnes = logsRes.logsList.filter(l => !existingIds.has(l.id));
+          return [...newOnes, ...prev];
+        });
+      }
+
+      setIsLiveConnected(true);
+      const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      setLastSyncTime(nowStr);
+    } finally {
+      setIsSyncingAll(false);
+    }
   };
 
   // Fitur D: Pengaturan Lembaga
@@ -263,6 +392,10 @@ export default function App() {
         isAdminLoggedIn={!!currentAdmin}
         onGuruLogout={handleLogoutGuru}
         onAdminLogout={handleLogoutAdmin}
+        isLiveConnected={isLiveConnected}
+        totalMurid={muridList.length}
+        totalGuru={guruList.length}
+        onOpenConnectionModal={() => setConnectionModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -316,6 +449,11 @@ export default function App() {
             onSyncGuruSpreadsheet={handleSyncGuruSpreadsheet}
             onSavePengaturan={handleSavePengaturan}
             onOpenReportPrint={(murid) => setPrintMurid(murid)}
+            gasWebAppUrl={gasWebAppUrl}
+            onSaveGasWebAppUrl={(url) => setGasWebAppUrl(url)}
+            onOpenConnectionModal={() => setConnectionModalOpen(true)}
+            isLiveConnected={isLiveConnected}
+            lastSyncTime={lastSyncTime}
           />
         )}
 
@@ -336,6 +474,20 @@ export default function App() {
         />
       )}
 
+      {/* Connection & Live Spreadsheet Modal */}
+      <ConnectionModal
+        isOpen={connectionModalOpen}
+        onClose={() => setConnectionModalOpen(false)}
+        isLiveConnected={isLiveConnected}
+        lastSyncTime={lastSyncTime}
+        totalMurid={muridList.length}
+        totalGuru={guruList.length}
+        gasWebAppUrl={gasWebAppUrl}
+        onSaveGasWebAppUrl={(url) => setGasWebAppUrl(url)}
+        onTriggerSyncAll={handleSyncAll}
+        isSyncing={isSyncingAll}
+      />
+
       {/* Footer */}
       <footer className="bg-slate-900 text-slate-400 py-6 text-center text-xs mt-auto border-t border-slate-800">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -347,10 +499,16 @@ export default function App() {
               Sistem Jurnal Tata Tertib & Buku Saku Kedisiplinan Terpadu
             </p>
           </div>
-          <div className="text-right text-[11px] text-slate-500">
-            <span>Spreadsheet: <code className="font-mono text-slate-400">1vzxldrnNQ...</code></span>
-            <span className="mx-2">&bull;</span>
-            <span>Drive Folder: <code className="font-mono text-slate-400">18tDeAMgEF...</code></span>
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <button
+              onClick={() => setConnectionModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 font-mono transition-colors"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span>Sheets ID: {SPREADSHEET_ID.slice(0, 10)}...</span>
+            </button>
+            <span>&bull;</span>
+            <span className="font-mono text-slate-400">Drive: {DRIVE_FOLDER_ID.slice(0, 10)}...</span>
           </div>
         </div>
       </footer>
