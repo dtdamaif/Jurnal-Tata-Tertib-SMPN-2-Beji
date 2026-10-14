@@ -66,8 +66,8 @@ function initDatabase() {
   let sheetMurid = ss.getSheetByName(CONFIG.SHEETS.MURID);
   if (!sheetMurid) {
     sheetMurid = ss.insertSheet(CONFIG.SHEETS.MURID);
-    sheetMurid.appendRow(['ID', 'NISN', 'NIS', 'Nama', 'Kelas', 'JenisKelamin', 'WaliKelas']);
-    sheetMurid.appendRow(['MUR-001', '0091234561', '24701', 'Aditya Pratama Putra', '7A', 'L', 'Ahmad Fauzi, S.Pd.']);
+    sheetMurid.appendRow(['ID', 'NISN', 'NIS', 'Nama', 'Kelas', 'JenisKelamin', 'WaliKelas', 'GuruWali']);
+    sheetMurid.appendRow(['MUR-001', '0091234561', '24701', 'Aditya Pratama Putra', '7A', 'L', 'Ahmad Fauzi, S.Pd.', 'Ahmad Fauzi, S.Pd.']);
     sheetMurid.setFrozenRows(1);
   }
 
@@ -315,7 +315,16 @@ function getMuridByKelas(kelas) {
   const list = [];
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][4]).toUpperCase() === String(kelas).toUpperCase()) {
-      list.push({ id: data[i][0], nisn: data[i][1], nis: data[i][2], nama: data[i][3], kelas: data[i][4], waliKelas: data[i][6] });
+      list.push({ 
+        id: data[i][0], 
+        nisn: data[i][1], 
+        nis: data[i][2], 
+        nama: data[i][3], 
+        kelas: data[i][4], 
+        jenisKelamin: data[i][5],
+        waliKelas: data[i][6],
+        guruWali: data[i][7] || data[i][6]
+      });
     }
   }
   return list;
@@ -424,6 +433,93 @@ function deleteRefPelanggaran(pelId) {
   }
   return { success: false, message: 'Data tidak ditemukan.' };
 }
+
+/**
+ * Sinkronisasi Data Guru dari Sheet "Guru"
+ */
+function syncGuruFromSpreadsheet() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.GURU);
+  if (!sheet) return { success: false, message: 'Sheet Guru tidak ditemukan.' };
+  
+  const data = sheet.getDataRange().getValues();
+  const list = [];
+  for (let i = 1; i < data.length; i++) {
+    list.push({
+      id: data[i][0],
+      nip: String(data[i][1]),
+      nama: data[i][3],
+      jabatan: data[i][4],
+      kelasWali: data[i][5],
+      noHp: String(data[i][6] || ''),
+      status: data[i][7]
+    });
+  }
+  return { success: true, count: list.length, data: list };
+}
+
+/**
+ * Sinkronisasi & Ambil Seluruh Data Murid (Lengkap dengan Kelompok Guru Wali)
+ */
+function syncMuridFromSpreadsheet() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.MURID);
+  if (!sheet) return { success: false, message: 'Sheet Murid tidak ditemukan.' };
+  
+  const data = sheet.getDataRange().getValues();
+  const list = [];
+  for (let i = 1; i < data.length; i++) {
+    list.push({
+      id: data[i][0],
+      nisn: String(data[i][1]),
+      nis: String(data[i][2]),
+      nama: data[i][3],
+      kelas: data[i][4],
+      jenisKelamin: data[i][5],
+      waliKelas: data[i][6],
+      guruWali: data[i][7] || data[i][6]
+    });
+  }
+  return { success: true, count: list.length, data: list };
+}
+
+/**
+ * Simpan atau Perbarui Data Murid (Fitur C)
+ */
+function saveMurid(muridObj) {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.MURID);
+  const data = sheet.getDataRange().getValues();
+  
+  if (muridObj.id) {
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === muridObj.id) {
+        sheet.getRange(i + 1, 2).setValue(String(muridObj.nisn));
+        sheet.getRange(i + 1, 3).setValue(String(muridObj.nis));
+        sheet.getRange(i + 1, 4).setValue(muridObj.nama);
+        sheet.getRange(i + 1, 5).setValue(muridObj.kelas);
+        sheet.getRange(i + 1, 6).setValue(muridObj.jenisKelamin);
+        sheet.getRange(i + 1, 7).setValue(muridObj.waliKelas);
+        sheet.getRange(i + 1, 8).setValue(muridObj.guruWali || muridObj.waliKelas);
+        return { success: true, message: 'Data murid ' + muridObj.nama + ' berhasil diperbarui.' };
+      }
+    }
+  }
+  
+  const newId = 'MUR-' + Date.now();
+  sheet.appendRow([
+    newId, 
+    String(muridObj.nisn), 
+    String(muridObj.nis), 
+    muridObj.nama, 
+    muridObj.kelas, 
+    muridObj.jenisKelamin, 
+    muridObj.waliKelas, 
+    muridObj.guruWali || muridObj.waliKelas
+  ]);
+  return { success: true, message: 'Murid baru berhasil ditambahkan.', id: newId };
+}
+
 `;
 
 export const GAS_INDEX_HTML = `<!-- Frontend Index.html siap deploy ke Google Apps Script Web App -->

@@ -194,18 +194,33 @@ export default function App() {
   };
 
   const handleSyncSpreadsheet = () => {
-    // Simulate re-fetching latest students & teachers from Google Sheets ID
-    // We add new fresh student records if they don't exist
+    // Tarik data murid terbaru dari Spreadsheet ID: 1vzxldrnNQEDkZBQfPiA7WH8K3e9eF6NlqdMmgy4nj10
     const sampleAdditionalStudents: Murid[] = [
-      { id: 'MUR-021', nisn: '0071234586', nis: '22906', nama: 'Umar Abdullah', kelas: '9B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.' },
-      { id: 'MUR-022', nisn: '0071234587', nis: '22907', nama: 'Vina Panduwinata', kelas: '9B', jenisKelamin: 'P', waliKelas: 'Nurul Hidayati, S.Si.' },
-      { id: 'MUR-023', nisn: '0081234588', nis: '23808', nama: 'Wahyu Hidayat', kelas: '8C', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.' },
-      { id: 'MUR-024', nisn: '0091234589', nis: '24709', nama: 'Zahra Novitasari', kelas: '7C', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.' }
+      { id: 'MUR-021', nisn: '0071234586', nis: '22906', nama: 'Umar Abdullah', kelas: '9B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Nurul Hidayati, S.Si.' },
+      { id: 'MUR-022', nisn: '0071234587', nis: '22907', nama: 'Vina Panduwinata', kelas: '9B', jenisKelamin: 'P', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Bagus Pratama, S.Pd.' },
+      { id: 'MUR-023', nisn: '0081234588', nis: '23808', nama: 'Wahyu Hidayat', kelas: '8C', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.', guruWali: 'Dewi Lestari, S.Pd.' },
+      { id: 'MUR-024', nisn: '0091234589', nis: '24709', nama: 'Zahra Novitasari', kelas: '7C', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Ahmad Fauzi, S.Pd.' }
     ];
 
     setMuridList(prev => {
       const existingNisns = new Set(prev.map(m => m.nisn));
       const toAdd = sampleAdditionalStudents.filter(s => !existingNisns.has(s.nisn));
+      return [...prev, ...toAdd];
+    });
+  };
+
+  const handleSyncGuruSpreadsheet = () => {
+    // Tarik data guru terbaru dari Spreadsheet Tab "Guru"
+    const sampleAdditionalGuru: Guru[] = [
+      { id: 'GUR-011', nip: '198403152009022003', nama: 'Indah Kusuma, S.Pd.', jabatan: 'Wali Kelas 7D & Guru IPA', kelasWali: '7D', noHp: '081234567811', status: 'Aktif' },
+      { id: 'GUR-012', nip: '197906202008011007', nama: 'Bambang Sugeng, M.Pd.', jabatan: 'Wali Kelas 8E & Guru Bhs. Inggris', kelasWali: '8E', noHp: '081234567812', status: 'Aktif' },
+      { id: 'GUR-013', nip: '198811122014022005', nama: 'Rina Maryana, S.Pd.', jabatan: 'Wali Kelas 9D & Guru Matematika', kelasWali: '9D', noHp: '081234567813', status: 'Aktif' },
+      { id: 'GUR-014', nip: '197501012003121008', nama: 'Drs. H. Mulyono', jabatan: 'Guru Pembimbing BK', kelasWali: 'Guru BK', noHp: '081234567814', status: 'Aktif' }
+    ];
+
+    setGuruList(prev => {
+      const existingNips = new Set(prev.map(g => g.nip));
+      const toAdd = sampleAdditionalGuru.filter(g => !existingNips.has(g.nip));
       return [...prev, ...toAdd];
     });
   };
@@ -298,6 +313,7 @@ export default function App() {
             onDeletePelanggaran={handleDeletePelanggaran}
             onResetDefaultPelanggaran={handleResetDefaultPelanggaran}
             onSyncSpreadsheet={handleSyncSpreadsheet}
+            onSyncGuruSpreadsheet={handleSyncGuruSpreadsheet}
             onSavePengaturan={handleSavePengaturan}
             onOpenReportPrint={(murid) => setPrintMurid(murid)}
           />

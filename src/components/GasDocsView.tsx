@@ -144,11 +144,11 @@ export const GasDocsView: React.FC = () => {
             <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-slate-900">Sheet: "Murid"</span>
-                <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold">7 Kolom</span>
+                <span className="text-[10px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold">8 Kolom</span>
               </div>
-              <p className="text-xs text-slate-500">Master siswa kelas 7A-7H, 8A-8H, 9A-9H.</p>
+              <p className="text-xs text-slate-500">Master siswa kelas 7A-7H, 8A-8H, 9A-9H & kelompok guru wali.</p>
               <div className="bg-white p-2.5 rounded-lg border font-mono text-[11px] text-slate-700">
-                A: ID | B: NISN | C: NIS | D: Nama | E: Kelas | F: JenisKelamin | G: WaliKelas
+                A: ID | B: NISN | C: NIS | D: Nama | E: Kelas | F: JenisKelamin | G: WaliKelas | H: GuruWali
               </div>
             </div>
 

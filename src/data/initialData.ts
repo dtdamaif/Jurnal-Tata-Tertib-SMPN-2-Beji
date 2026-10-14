@@ -234,34 +234,34 @@ export const INITIAL_PELANGGARAN_REF: JenisPelanggaran[] = [
 
 export const INITIAL_MURID: Murid[] = [
   // Kelas 7A
-  { id: 'MUR-001', nisn: '0091234561', nis: '24701', nama: 'Aditya Pratama Putra', kelas: '7A', jenisKelamin: 'L', waliKelas: 'Ahmad Fauzi, S.Pd.' },
-  { id: 'MUR-002', nisn: '0091234562', nis: '24702', nama: 'Anindya Putri Kirana', kelas: '7A', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.' },
-  { id: 'MUR-003', nisn: '0091234563', nis: '24703', nama: 'Bayu Arya Nugraha', kelas: '7A', jenisKelamin: 'L', waliKelas: 'Ahmad Fauzi, S.Pd.' },
-  { id: 'MUR-004', nisn: '0091234564', nis: '24704', nama: 'Clarissa Zahra Ramadhani', kelas: '7A', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.' },
-  { id: 'MUR-005', nisn: '0091234565', nis: '24705', nama: 'Dimas Fajar Santoso', kelas: '7A', jenisKelamin: 'L', waliKelas: 'Ahmad Fauzi, S.Pd.' },
+  { id: 'MUR-001', nisn: '0091234561', nis: '24701', nama: 'Aditya Pratama Putra', kelas: '7A', jenisKelamin: 'L', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Ahmad Fauzi, S.Pd.' },
+  { id: 'MUR-002', nisn: '0091234562', nis: '24702', nama: 'Anindya Putri Kirana', kelas: '7A', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Ahmad Fauzi, S.Pd.' },
+  { id: 'MUR-003', nisn: '0091234563', nis: '24703', nama: 'Bayu Arya Nugraha', kelas: '7A', jenisKelamin: 'L', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Bagus Pratama, S.Pd.' },
+  { id: 'MUR-004', nisn: '0091234564', nis: '24704', nama: 'Clarissa Zahra Ramadhani', kelas: '7A', jenisKelamin: 'P', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Bagus Pratama, S.Pd.' },
+  { id: 'MUR-005', nisn: '0091234565', nis: '24705', nama: 'Dimas Fajar Santoso', kelas: '7A', jenisKelamin: 'L', waliKelas: 'Ahmad Fauzi, S.Pd.', guruWali: 'Ahmad Fauzi, S.Pd.' },
 
   // Kelas 7B
-  { id: 'MUR-006', nisn: '0091234566', nis: '24706', nama: 'Fajar Eka Saputra', kelas: '7B', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.' },
-  { id: 'MUR-007', nisn: '0091234567', nis: '24707', nama: 'Gita Maharani', kelas: '7B', jenisKelamin: 'P', waliKelas: 'Dewi Lestari, S.Pd.' },
-  { id: 'MUR-008', nisn: '0091234568', nis: '24708', nama: 'Haikal Maulana Akbar', kelas: '7B', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.' },
+  { id: 'MUR-006', nisn: '0091234566', nis: '24706', nama: 'Fajar Eka Saputra', kelas: '7B', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.', guruWali: 'Dewi Lestari, S.Pd.' },
+  { id: 'MUR-007', nisn: '0091234567', nis: '24707', nama: 'Gita Maharani', kelas: '7B', jenisKelamin: 'P', waliKelas: 'Dewi Lestari, S.Pd.', guruWali: 'Dewi Lestari, S.Pd.' },
+  { id: 'MUR-008', nisn: '0091234568', nis: '24708', nama: 'Haikal Maulana Akbar', kelas: '7B', jenisKelamin: 'L', waliKelas: 'Dewi Lestari, S.Pd.', guruWali: 'Bagus Pratama, S.Pd.' },
 
   // Kelas 8A
-  { id: 'MUR-009', nisn: '0081234571', nis: '23801', nama: 'Ilham Rizky Ramadhan', kelas: '8A', jenisKelamin: 'L', waliKelas: 'Hendra Setiawan, M.Pd.' },
-  { id: 'MUR-010', nisn: '0081234572', nis: '23802', nama: 'Jessica Amelia', kelas: '8A', jenisKelamin: 'P', waliKelas: 'Hendra Setiawan, M.Pd.' },
-  { id: 'MUR-011', nisn: '0081234573', nis: '23803', nama: 'Kevin Andreansyah', kelas: '8A', jenisKelamin: 'L', waliKelas: 'Hendra Setiawan, M.Pd.' },
-  { id: 'MUR-012', nisn: '0081234574', nis: '23804', nama: 'Larasati Dwi Astuti', kelas: '8A', jenisKelamin: 'P', waliKelas: 'Hendra Setiawan, M.Pd.' },
+  { id: 'MUR-009', nisn: '0081234571', nis: '23801', nama: 'Ilham Rizky Ramadhan', kelas: '8A', jenisKelamin: 'L', waliKelas: 'Hendra Setiawan, M.Pd.', guruWali: 'Hendra Setiawan, M.Pd.' },
+  { id: 'MUR-010', nisn: '0081234572', nis: '23802', nama: 'Jessica Amelia', kelas: '8A', jenisKelamin: 'P', waliKelas: 'Hendra Setiawan, M.Pd.', guruWali: 'Hendra Setiawan, M.Pd.' },
+  { id: 'MUR-011', nisn: '0081234573', nis: '23803', nama: 'Kevin Andreansyah', kelas: '8A', jenisKelamin: 'L', waliKelas: 'Hendra Setiawan, M.Pd.', guruWali: 'Bagus Pratama, S.Pd.' },
+  { id: 'MUR-012', nisn: '0081234574', nis: '23804', nama: 'Larasati Dwi Astuti', kelas: '8A', jenisKelamin: 'P', waliKelas: 'Hendra Setiawan, M.Pd.', guruWali: 'Hendra Setiawan, M.Pd.' },
 
   // Kelas 8B
-  { id: 'MUR-013', nisn: '0081234575', nis: '23805', nama: 'Muhammad Danial Huda', kelas: '8B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.' },
-  { id: 'MUR-014', nisn: '0081234576', nis: '23806', nama: 'Nadia Safitri', kelas: '8B', jenisKelamin: 'P', waliKelas: 'Nurul Hidayati, S.Si.' },
-  { id: 'MUR-015', nisn: '0081234577', nis: '23807', nama: 'Oki Kurniawan', kelas: '8B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.' },
+  { id: 'MUR-013', nisn: '0081234575', nis: '23805', nama: 'Muhammad Danial Huda', kelas: '8B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Nurul Hidayati, S.Si.' },
+  { id: 'MUR-014', nisn: '0081234576', nis: '23806', nama: 'Nadia Safitri', kelas: '8B', jenisKelamin: 'P', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Nurul Hidayati, S.Si.' },
+  { id: 'MUR-015', nisn: '0081234577', nis: '23807', nama: 'Oki Kurniawan', kelas: '8B', jenisKelamin: 'L', waliKelas: 'Nurul Hidayati, S.Si.', guruWali: 'Bagus Pratama, S.Pd.' },
 
   // Kelas 9A
-  { id: 'MUR-016', nisn: '0071234581', nis: '22901', nama: 'Panji Tri Wicaksono', kelas: '9A', jenisKelamin: 'L', waliKelas: 'Subiantoro, S.Pd.' },
-  { id: 'MUR-017', nisn: '0071234582', nis: '22902', nama: 'Qori Anggraini', kelas: '9A', jenisKelamin: 'P', waliKelas: 'Subiantoro, S.Pd.' },
-  { id: 'MUR-018', nisn: '0071234583', nis: '22903', nama: 'Rendy Syahputra', kelas: '9A', jenisKelamin: 'L', waliKelas: 'Subiantoro, S.Pd.' },
-  { id: 'MUR-019', nisn: '0071234584', nis: '22904', nama: 'Siti Nur Aisyah', kelas: '9A', jenisKelamin: 'P', waliKelas: 'Subiantoro, S.Pd.' },
-  { id: 'MUR-020', nisn: '0071234585', nis: '22905', nama: 'Teguh Prasetyo', kelas: '9A', jenisKelamin: 'L', waliKelas: 'Subiantoro, S.Pd.' }
+  { id: 'MUR-016', nisn: '0071234581', nis: '22901', nama: 'Panji Tri Wicaksono', kelas: '9A', jenisKelamin: 'L', waliKelas: 'Subiantoro, S.Pd.', guruWali: 'Subiantoro, S.Pd.' },
+  { id: 'MUR-017', nisn: '0071234582', nis: '22902', nama: 'Qori Anggraini', kelas: '9A', jenisKelamin: 'P', waliKelas: 'Subiantoro, S.Pd.', guruWali: 'Subiantoro, S.Pd.' },
+  { id: 'MUR-018', nisn: '0071234583', nis: '22903', nama: 'Rendy Syahputra', kelas: '9A', jenisKelamin: 'L', waliKelas: 'Subiantoro, S.Pd.', guruWali: 'Bagus Pratama, S.Pd.' },
+  { id: 'MUR-019', nisn: '0071234584', nis: '22904', nama: 'Siti Nur Aisyah', kelas: '9A', jenisKelamin: 'P', waliKelas: 'Subiantoro, S.Pd.', guruWali: 'Subiantoro, S.Pd.' },
+  { id: 'MUR-020', nisn: '0071234585', nis: '22905', nama: 'Teguh Prasetyo', kelas: '9A', jenisKelamin: 'L', waliKelas: 'Subiantoro, S.Pd.', guruWali: 'Subiantoro, S.Pd.' }
 ];
 
 export const INITIAL_LOGS: LogPelanggaran[] = [

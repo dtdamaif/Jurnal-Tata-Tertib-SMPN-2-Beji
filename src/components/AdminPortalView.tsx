@@ -29,6 +29,7 @@ interface AdminPortalViewProps {
   onDeletePelanggaran: (id: string) => void;
   onResetDefaultPelanggaran?: () => void;
   onSyncSpreadsheet: () => void;
+  onSyncGuruSpreadsheet: () => void;
   onSavePengaturan: (newSettings: PengaturanLembaga) => void;
   onOpenReportPrint?: (murid: Murid) => void;
 }
@@ -53,6 +54,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   onDeletePelanggaran,
   onResetDefaultPelanggaran,
   onSyncSpreadsheet,
+  onSyncGuruSpreadsheet,
   onSavePengaturan,
   onOpenReportPrint
 }) => {
@@ -81,9 +83,18 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   const [pelSearch, setPelSearch] = useState('');
   const [pelanggaranSuccessMsg, setPelanggaranSuccessMsg] = useState('');
 
-  // Sync animation state
+  // Sync animation state (Murid)
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncSuccessMsg, setSyncSuccessMsg] = useState('');
+
+  // Sync animation state (Guru)
+  const [isSyncingGuru, setIsSyncingGuru] = useState(false);
+  const [syncGuruSuccessMsg, setSyncGuruSuccessMsg] = useState('');
+
+  // Fitur C: Master Murid Filter States
+  const [muridFilterKelas, setMuridFilterKelas] = useState('Semua');
+  const [muridFilterWali, setMuridFilterWali] = useState('Semua');
+  const [muridSearchQuery, setMuridSearchQuery] = useState('');
 
   // Fitur D: Pengaturan State Form
   const [settingsForm, setSettingsForm] = useState<PengaturanLembaga>(pengaturan);
@@ -104,25 +115,57 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     }
   };
 
-  // Trigger Spreadsheet Sync
+  // Trigger Spreadsheet Sync Murid
   const handleTriggerSync = () => {
     setIsSyncing(true);
     setSyncSuccessMsg('');
     setTimeout(() => {
       onSyncSpreadsheet();
       setIsSyncing(false);
-      setSyncSuccessMsg('Data Murid dan Guru berhasil disinkronisasi dari Spreadsheet (ID: 1vzxldrnNQ...)!');
+      setSyncSuccessMsg('Data Murid berhasil disinkronisasi dari Spreadsheet (ID: 1vzxldrnNQ...)!');
       setTimeout(() => setSyncSuccessMsg(''), 4000);
     }, 1200);
   };
+
+  // Trigger Spreadsheet Sync Guru
+  const handleTriggerSyncGuru = () => {
+    setIsSyncingGuru(true);
+    setSyncGuruSuccessMsg('');
+    setTimeout(() => {
+      onSyncGuruSpreadsheet();
+      setIsSyncingGuru(false);
+      setSyncGuruSuccessMsg('Data Guru berhasil ditarik dan disinkronkan dari Spreadsheet (Tab: Guru, ID: 1vzxldrnNQ...)!');
+      setTimeout(() => setSyncGuruSuccessMsg(''), 4000);
+    }, 1200);
+  };
+
+  // Unique list of Guru Wali for filtering
+  const daftarSemuaGuruWali = Array.from(new Set([
+    ...guruList.map(g => g.nama),
+    ...muridList.map(m => m.guruWali || m.waliKelas)
+  ])).filter(Boolean).sort();
+
+  // Filtered Murid List for Fitur C
+  const filteredMuridList = muridList.filter(m => {
+    const matchKelas = muridFilterKelas === 'Semua' || m.kelas === muridFilterKelas;
+    const matchWali = muridFilterWali === 'Semua' || (m.guruWali === muridFilterWali || m.waliKelas === muridFilterWali);
+    const q = muridSearchQuery.toLowerCase().trim();
+    const matchQuery = !q || 
+      m.nama.toLowerCase().includes(q) || 
+      m.nisn.includes(q) || 
+      m.nis.includes(q) ||
+      (m.guruWali && m.guruWali.toLowerCase().includes(q)) ||
+      m.waliKelas.toLowerCase().includes(q);
+    return matchKelas && matchWali && matchQuery;
+  });
 
   // Filtered Logs for Fitur E Laporan
   const filteredLogs = logs.filter(l => {
     const matchKelas = laporanKelasFilter === 'Semua' || l.kelas === laporanKelasFilter;
     
-    // Find murid to check wali kelas
+    // Find murid to check wali kelas & kelompok guru wali
     const m = muridList.find(item => item.nisn === l.nisn);
-    const matchWali = laporanWaliFilter === 'Semua' || (m && m.waliKelas === laporanWaliFilter);
+    const matchWali = laporanWaliFilter === 'Semua' || (m && (m.guruWali === laporanWaliFilter || m.waliKelas === laporanWaliFilter));
 
     const matchQuery = 
       !laporanMuridQuery ||
@@ -134,22 +177,27 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
 
   // Export to Excel (.xlsx) using SheetJS
   const handleExportExcel = () => {
-    const dataToExport = filteredLogs.map((l, index) => ({
-      'No': index + 1,
-      'ID Log': l.id,
-      'Tanggal': l.tanggal,
-      'Hari': l.hari,
-      'Kelas': l.kelas,
-      'NISN': l.nisn,
-      'Nama Siswa': l.namaMurid,
-      'Pelanggaran': l.pelanggaranList.map(p => `${p.nama} (+${p.poin})`).join('; '),
-      'Total Poin': l.totalPoin,
-      'Foto Bukti Link': l.fotoBuktiUrl,
-      'Catatan': l.catatan || '-',
-      'Guru Pelapor': l.guruNama,
-      'NIP Pelapor': l.guruNip,
-      'Waktu Catat': l.timestamp
-    }));
+    const dataToExport = filteredLogs.map((l, index) => {
+      const studentObj = muridList.find(m => m.nisn === l.nisn);
+      return {
+        'No': index + 1,
+        'ID Log': l.id,
+        'Tanggal': l.tanggal,
+        'Hari': l.hari,
+        'Kelas': l.kelas,
+        'NISN': l.nisn,
+        'Nama Siswa': l.namaMurid,
+        'Wali Kelas': studentObj ? studentObj.waliKelas : '-',
+        'Kelompok Guru Wali': studentObj ? (studentObj.guruWali || studentObj.waliKelas) : '-',
+        'Pelanggaran': l.pelanggaranList.map(p => `${p.nama} (+${p.poin})`).join('; '),
+        'Total Poin': l.totalPoin,
+        'Foto Bukti Link': l.fotoBuktiUrl,
+        'Catatan': l.catatan || '-',
+        'Guru Pelapor': l.guruNama,
+        'NIP Pelapor': l.guruNip,
+        'Waktu Catat': l.timestamp
+      };
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
@@ -158,8 +206,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     // Auto-fit column width
     worksheet['!cols'] = [
       { wch: 5 }, { wch: 15 }, { wch: 12 }, { wch: 10 }, { wch: 8 },
-      { wch: 14 }, { wch: 25 }, { wch: 45 }, { wch: 10 }, { wch: 30 },
-      { wch: 30 }, { wch: 22 }, { wch: 20 }, { wch: 20 }
+      { wch: 14 }, { wch: 25 }, { wch: 22 }, { wch: 24 }, { wch: 45 },
+      { wch: 10 }, { wch: 30 }, { wch: 30 }, { wch: 22 }, { wch: 20 }, { wch: 20 }
     ];
 
     XLSX.writeFile(workbook, `Laporan_Pelanggaran_SMPN2Beji_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -454,17 +502,36 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                 Akun guru digunakan saat mengakses formulir input pelanggaran (Username: NIP, Password default: Smpn2Beji).
               </p>
             </div>
-            <button
-              onClick={() => {
-                setEditingGuru(null);
-                setGuruModalOpen(true);
-              }}
-              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Guru Baru</span>
-            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleTriggerSyncGuru}
+                disabled={isSyncingGuru}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-sm"
+              >
+                <RotateCw className={`w-4 h-4 ${isSyncingGuru ? 'animate-spin' : ''}`} />
+                <span>{isSyncingGuru ? 'Menghubungkan Spreadsheet...' : 'Tarik Data Guru dari Spreadsheet'}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setEditingGuru(null);
+                  setGuruModalOpen(true);
+                }}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Guru Baru</span>
+              </button>
+            </div>
           </div>
+
+          {syncGuruSuccessMsg && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>{syncGuruSuccessMsg}</span>
+            </div>
+          )}
 
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-left text-xs sm:text-sm">
@@ -578,61 +645,152 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
             </div>
           )}
 
+          {/* Filter Bar: Filter Kelas, Kelompok Guru Wali, & Pencarian */}
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-indigo-600" />
+                Filter Berdasarkan Kelas & Kelompok Guru Wali
+              </span>
+              <span className="text-xs text-slate-500 font-semibold">
+                Menampilkan <strong className="text-indigo-700 font-bold">{filteredMuridList.length}</strong> dari {muridList.length} murid
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Filter 1: Kelas */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Filter Kelas</label>
+                <select
+                  value={muridFilterKelas}
+                  onChange={(e) => setMuridFilterKelas(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
+                >
+                  <option value="Semua">Semua Kelas (7A - 9H)</option>
+                  {DAFTAR_KELAS.map(k => (
+                    <option key={k} value={k}>Kelas {k}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter 2: Kelompok Guru Wali */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Filter Kelompok Guru Wali</label>
+                <select
+                  value={muridFilterWali}
+                  onChange={(e) => setMuridFilterWali(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
+                >
+                  <option value="Semua">Semua Kelompok Guru Wali</option>
+                  {daftarSemuaGuruWali.map(wali => (
+                    <option key={wali} value={wali}>{wali}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter 3: Pencarian Murid */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Cari Nama Siswa / NISN / NIS</label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={muridSearchQuery}
+                    onChange={(e) => setMuridSearchQuery(e.target.value)}
+                    placeholder="Ketik nama, NISN, atau wali..."
+                    className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {(muridFilterKelas !== 'Semua' || muridFilterWali !== 'Semua' || muridSearchQuery) && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMuridFilterKelas('Semua');
+                    setMuridFilterWali('Semua');
+                    setMuridSearchQuery('');
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                >
+                  Reset Filter Murid
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-left text-xs sm:text-sm">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase text-[11px]">
                 <tr>
-                  <th className="py-3 px-4">NISN</th>
-                  <th className="py-3 px-4">NIS</th>
-                  <th className="py-3 px-4">Nama Siswa</th>
-                  <th className="py-3 px-4 text-center">Kelas</th>
-                  <th className="py-3 px-4 text-center">L/P</th>
-                  <th className="py-3 px-4">Wali Kelas</th>
-                  <th className="py-3 px-4 text-center">Aksi</th>
+                  <th className="py-3 px-3">NISN</th>
+                  <th className="py-3 px-3">NIS</th>
+                  <th className="py-3 px-3">Nama Siswa</th>
+                  <th className="py-3 px-3 text-center">Kelas</th>
+                  <th className="py-3 px-3 text-center">L/P</th>
+                  <th className="py-3 px-3">Wali Kelas</th>
+                  <th className="py-3 px-3">Kelompok Guru Wali</th>
+                  <th className="py-3 px-3 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {muridList.map(m => (
-                  <tr key={m.id} className="hover:bg-slate-50/70">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-700">{m.nisn}</td>
-                    <td className="py-3 px-4 font-mono text-slate-500">{m.nis}</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{m.nama}</td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="px-2.5 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-md text-xs">
-                        {m.kelas}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-center font-bold text-slate-600">
-                      {m.jenisKelamin}
-                    </td>
-                    <td className="py-3 px-4 text-slate-600 text-xs">{m.waliKelas}</td>
-                    <td className="py-3 px-4 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => {
-                            setEditingMurid(m);
-                            setMuridModalOpen(true);
-                          }}
-                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg"
-                          title="Edit Murid"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Hapus murid ${m.nama}?`)) {
-                              onDeleteMurid(m.id);
-                            }
-                          }}
-                          className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg"
-                          title="Hapus Murid"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                {filteredMuridList.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
+                      Tidak ada data murid yang sesuai dengan filter kelas atau kelompok guru wali.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredMuridList.map(m => (
+                    <tr key={m.id} className="hover:bg-slate-50/70">
+                      <td className="py-3 px-3 font-mono font-bold text-slate-700">{m.nisn}</td>
+                      <td className="py-3 px-3 font-mono text-slate-500">{m.nis}</td>
+                      <td className="py-3 px-3 font-bold text-slate-900">{m.nama}</td>
+                      <td className="py-3 px-3 text-center">
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-md text-xs">
+                          {m.kelas}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold text-slate-600">
+                        {m.jenisKelamin}
+                      </td>
+                      <td className="py-3 px-3 text-slate-600 text-xs">{m.waliKelas}</td>
+                      <td className="py-3 px-3">
+                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-800 font-bold rounded-md text-xs flex items-center gap-1 w-fit">
+                          <Users className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>{m.guruWali || m.waliKelas}</span>
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingMurid(m);
+                              setMuridModalOpen(true);
+                            }}
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                            title="Edit Murid"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`Hapus murid ${m.nama}?`)) {
+                                onDeleteMurid(m.id);
+                              }
+                            }}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg"
+                            title="Hapus Murid"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -982,10 +1140,10 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                 onChange={(e) => setLaporanWaliFilter(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
               >
-                <option value="Semua">Semua Guru Wali</option>
-                {guruList.map(g => (
-                  <option key={g.id} value={g.nama}>
-                    {g.nama} ({g.kelasWali || g.jabatan})
+                <option value="Semua">Semua Kelompok Guru Wali</option>
+                {daftarSemuaGuruWali.map(wali => (
+                  <option key={wali} value={wali}>
+                    {wali}
                   </option>
                 ))}
               </select>
@@ -1571,6 +1729,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
               onSubmit={(e) => {
                 e.preventDefault();
                 const form = e.target as HTMLFormElement;
+                const waliKelasVal = (form.elements.namedItem('waliKelas') as HTMLInputElement).value;
+                const guruWaliVal = (form.elements.namedItem('guruWali') as HTMLInputElement).value || waliKelasVal;
                 const newMurid: Murid = {
                   id: editingMurid ? editingMurid.id : 'MUR-' + ('000' + (muridList.length + 1)).slice(-4),
                   nisn: (form.elements.namedItem('nisn') as HTMLInputElement).value,
@@ -1578,7 +1738,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                   nama: (form.elements.namedItem('nama') as HTMLInputElement).value,
                   kelas: (form.elements.namedItem('kelas') as HTMLSelectElement).value,
                   jenisKelamin: (form.elements.namedItem('jenisKelamin') as HTMLSelectElement).value as 'L' | 'P',
-                  waliKelas: (form.elements.namedItem('waliKelas') as HTMLInputElement).value
+                  waliKelas: waliKelasVal,
+                  guruWali: guruWaliVal
                 };
                 onSaveMurid(newMurid);
                 setMuridModalOpen(false);
@@ -1638,15 +1799,32 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                   </select>
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Nama Guru Wali Kelas</label>
-                <input
-                  name="waliKelas"
-                  defaultValue={editingMurid?.waliKelas || ''}
-                  required
-                  placeholder="Ahmad Fauzi, S.Pd."
-                  className="w-full px-3 py-2 border rounded-xl text-xs"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Wali Kelas</label>
+                  <input
+                    name="waliKelas"
+                    defaultValue={editingMurid?.waliKelas || ''}
+                    required
+                    placeholder="Ahmad Fauzi, S.Pd."
+                    className="w-full px-3 py-2 border rounded-xl text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Kelompok Guru Wali</label>
+                  <input
+                    name="guruWali"
+                    defaultValue={editingMurid?.guruWali || editingMurid?.waliKelas || ''}
+                    placeholder="Nama Guru Wali..."
+                    list="guruWaliModalOptions"
+                    className="w-full px-3 py-2 border rounded-xl text-xs"
+                  />
+                  <datalist id="guruWaliModalOptions">
+                    {daftarSemuaGuruWali.map(gw => (
+                      <option key={gw} value={gw} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
               <div className="flex justify-end gap-2 pt-3">
                 <button

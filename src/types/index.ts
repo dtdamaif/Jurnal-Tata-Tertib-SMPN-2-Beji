@@ -25,6 +25,7 @@ export interface Murid {
   kelas: string; // 7A - 7H, 8A - 8H, 9A - 9H
   jenisKelamin: 'L' | 'P';
   waliKelas: string;
+  guruWali?: string; // Kelompok Guru Wali / Guru Pendamping
   totalPoin?: number;
   logs?: LogPelanggaran[];
 }
