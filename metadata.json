@@ -1,0 +1,6 @@
+{
+  "name": "Jurnal Tata Tertib SMPN 2 Beji",
+  "description": "Sistem Informasi Tata Tertib & Pencatatan Pelanggaran Siswa SMPN 2 Beji terintegrasi Google Sheets & Google Drive",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
