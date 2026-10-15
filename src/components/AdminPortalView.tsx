@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   ShieldCheck, Lock, UserCog, GraduationCap, Users, Settings, 
@@ -8,7 +8,7 @@ import {
   Sparkles, School, Globe, Send, ExternalLink, Info, Check, Database,
   FileCheck
 } from 'lucide-react';
-import { AdminUser, Guru, Murid, LogPelanggaran, PengaturanLembaga, JenisPelanggaran, KomponenPelanggaran, getSanksiByPoin } from '../types';
+import { AdminUser, Guru, Murid, LogPelanggaran, PengaturanLembaga, JenisPelanggaran, KomponenPelanggaran, getSanksiByPoin, isSameStudent, normalizeNisn } from '../types';
 import { DAFTAR_KELAS, GAS_CONFIG } from '../data/initialData';
 import { testGasConnection, SPREADSHEET_ID, DRIVE_FOLDER_ID } from '../services/googleSheetsService';
 import { RekapPrintModal, RekapItem } from './RekapPrintModal';
@@ -268,14 +268,36 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     }
   };
 
+  // Gabungkan seluruh siswa muridList dengan siswa yang ada di logs (agar sinkron dan selalu muncul di seluruh komputer)
+  const allMuridWithLogs: Murid[] = useMemo(() => {
+    const list = [...muridList];
+    logs.forEach(l => {
+      if (!l.namaMurid) return;
+      const exists = list.some(m => isSameStudent(l, m));
+      if (!exists) {
+        list.push({
+          id: `MUR-LOG-${normalizeNisn(l.nisn) || l.namaMurid.replace(/\s+/g, '_')}`,
+          nisn: normalizeNisn(l.nisn) || '',
+          nis: '',
+          nama: l.namaMurid,
+          kelas: l.kelas || '7A',
+          jenisKelamin: 'L',
+          waliKelas: 'Guru SMPN 2 Beji',
+          guruWali: 'Guru SMPN 2 Beji'
+        });
+      }
+    });
+    return list;
+  }, [muridList, logs]);
+
   // Unique list of Guru Wali for filtering
   const daftarSemuaGuruWali = Array.from(new Set([
     ...guruList.map(g => g.nama),
-    ...muridList.map(m => m.guruWali || m.waliKelas)
+    ...allMuridWithLogs.map(m => m.guruWali || m.waliKelas)
   ])).filter(Boolean).sort();
 
   // Filtered Murid List for Fitur C
-  const filteredMuridList = muridList.filter(m => {
+  const filteredMuridList = allMuridWithLogs.filter(m => {
     const matchKelas = muridFilterKelas === 'Semua' || m.kelas === muridFilterKelas;
     const matchWali = muridFilterWali === 'Semua' || (m.guruWali === muridFilterWali || m.waliKelas === muridFilterWali);
     const q = muridSearchQuery.toLowerCase().trim();
@@ -293,20 +315,21 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     const matchKelas = laporanKelasFilter === 'Semua' || l.kelas === laporanKelasFilter;
     
     // Find murid to check wali kelas & kelompok guru wali
-    const m = muridList.find(item => item.nisn === l.nisn);
+    const m = allMuridWithLogs.find(item => isSameStudent(l, item));
     const matchWali = laporanWaliFilter === 'Semua' || (m && (m.guruWali === laporanWaliFilter || m.waliKelas === laporanWaliFilter));
 
     const matchQuery = 
       !laporanMuridQuery ||
       l.namaMurid.toLowerCase().includes(laporanMuridQuery.toLowerCase()) ||
-      l.nisn.includes(laporanMuridQuery);
+      l.nisn.includes(laporanMuridQuery) ||
+      (m && (m.nama.toLowerCase().includes(laporanMuridQuery.toLowerCase()) || m.nisn.includes(laporanMuridQuery)));
 
     return matchKelas && matchWali && matchQuery;
   });
 
   // Rekapitulasi Siswa Berdasarkan Akumulasi Poin (Per Kelas / Guru Wali)
   // Menghitung poin tiap siswa, dan memfilter hanya yang memiliki poin (> 0) sesuai instruksi
-  const rekapSiswaData: RekapItem[] = muridList
+  const rekapSiswaData: RekapItem[] = allMuridWithLogs
     .filter(m => {
       const matchKelas = laporanKelasFilter === 'Semua' || m.kelas === laporanKelasFilter;
       const matchWali = laporanWaliFilter === 'Semua' || (m.guruWali === laporanWaliFilter || m.waliKelas === laporanWaliFilter);
@@ -320,7 +343,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
       return matchKelas && matchWali && matchQuery;
     })
     .map(m => {
-      const studentLogs = logs.filter(l => l.nisn === m.nisn);
+      // Cocokkan log dengan murid menggunakan isSameStudent
+      const studentLogs = logs.filter(l => isSameStudent(l, m));
       const totalPoin = studentLogs.reduce((sum, l) => sum + (l.totalPoin || 0), 0);
       const totalKasus = studentLogs.length;
       const listPel = studentLogs.flatMap(l => l.pelanggaranList || []);
@@ -386,14 +410,14 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   // Export Jurnal Log ke Excel (.xlsx) using SheetJS
   const handleExportExcel = () => {
     const dataToExport = filteredLogs.map((l, index) => {
-      const studentObj = muridList.find(m => m.nisn === l.nisn);
+      const studentObj = muridList.find(m => isSameStudent(l, m));
       return {
         'No': index + 1,
         'ID Log': l.id,
         'Tanggal': l.tanggal,
         'Hari': l.hari,
         'Kelas': l.kelas,
-        'NISN': l.nisn,
+        'NISN': normalizeNisn(l.nisn),
         'Nama Siswa': l.namaMurid,
         'Wali Kelas': studentObj ? studentObj.waliKelas : '-',
         'Kelompok Guru Wali': studentObj ? (studentObj.guruWali || studentObj.waliKelas) : '-',
@@ -1936,7 +1960,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                       </tr>
                     ) : (
                       filteredLogs.map((l, lIdx) => {
-                        const studentObj = muridList.find(m => m.nisn === l.nisn);
+                        const studentObj = muridList.find(m => isSameStudent(l, m));
                         return (
                           <tr key={`${l.id || 'log'}_${lIdx}`} className="hover:bg-slate-50/70">
                             <td className="py-3 px-3 whitespace-nowrap">

@@ -217,3 +217,42 @@ export function getPenilaianTigaKomponen(logs: LogPelanggaran[]) {
     totalPoin: poinKepribadian + poinKerajinan + poinKerapian
   };
 }
+
+/**
+ * Normalisasi format NISN agar konsisten 10 digit (mengatasi kasus Google Sheets membuang angka 0 di depan)
+ */
+export function normalizeNisn(nisn?: string | number | null): string {
+  if (!nisn) return '';
+  const clean = String(nisn).trim().replace(/\D/g, '');
+  if (!clean) return '';
+  // Jika kurang dari 10 digit (misal: 115902007 -> 0115902007), tambahkan leading zero
+  if (clean.length < 10) {
+    return clean.padStart(10, '0');
+  }
+  return clean;
+}
+
+/**
+ * Pengecekan apakah log pelanggaran merujuk pada siswa yang sama
+ * Mendukung pencocokan multi-jalur:
+ * 1. Normalized NISN (10 digit standar nasional)
+ * 2. Normalized Nama Siswa (case-insensitive & spasi bersih)
+ */
+export function isSameStudent(
+  log: { nisn?: string | number | null; namaMurid?: string },
+  student: { nisn?: string | number | null; nama?: string }
+): boolean {
+  const logNisn = normalizeNisn(log.nisn);
+  const studentNisn = normalizeNisn(student.nisn);
+  if (logNisn && studentNisn && logNisn === studentNisn) {
+    return true;
+  }
+  if (log.namaMurid && student.nama) {
+    const cleanLogName = log.namaMurid.trim().toLowerCase().replace(/\s+/g, ' ');
+    const cleanStudentName = student.nama.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (cleanLogName && cleanStudentName && cleanLogName === cleanStudentName) {
+      return true;
+    }
+  }
+  return false;
+}

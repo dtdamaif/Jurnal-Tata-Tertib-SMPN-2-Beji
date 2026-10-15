@@ -40,12 +40,16 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               onClick={onOpenConnectionModal}
               className="flex items-center gap-1.5 font-mono text-[10px] bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-600/50 transition-colors cursor-pointer"
-              title="Klik untuk melihat status koneksi Google Sheets & Drive"
+              title="Klik untuk melihat status koneksi Google Sheets & Server"
             >
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <Database className="w-3 h-3 text-emerald-400" />
-              <span>Google Sheets Live: {totalMurid} Murid &bull; {totalGuru} Guru</span>
+              <span>Google Sheets & Cloud Server: {totalMurid} Murid &bull; {totalGuru} Guru</span>
             </button>
+            <span className="hidden sm:inline-flex items-center gap-1 font-mono text-[10px] bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-500/40">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+              Auto-Sync Multi-Komputer Aktif
+            </span>
             <span className="hidden lg:flex items-center gap-1 font-mono text-[10px] bg-blue-900/80 px-2 py-0.5 rounded border border-blue-700/50">
               <FolderHeart className="w-3 h-3 text-amber-400" />
               Drive Foto: 18tDeAMgEF...

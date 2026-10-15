@@ -22,6 +22,8 @@ interface CentralDatabase {
   admins: any[];
   refPelanggaran: any[];
   logs: any[];
+  muridList: any[];
+  guruList: any[];
   pengaturan: any;
   gasWebAppUrl: string;
   lastUpdated: string;
@@ -44,10 +46,18 @@ function getDatabase(): CentralDatabase {
       const content = fs.readFileSync(DB_FILE_PATH, 'utf-8');
       const data = JSON.parse(content);
       const activeUrl = data.gasWebAppUrl || data.pengaturan?.gasWebAppUrl || savedSettingsGasUrl || GAS_CONFIG?.webAppUrl || '';
+      const rawLogs = data.logs || INITIAL_LOGS;
+      const normalizedLogs = rawLogs.map((l: any) => {
+        let n = String(l.nisn || '').trim().replace(/\D/g, '');
+        if (n && n.length < 10) n = n.padStart(10, '0');
+        return { ...l, nisn: n || l.nisn };
+      });
       return {
         admins: data.admins || INITIAL_ADMINS,
         refPelanggaran: data.refPelanggaran || INITIAL_PELANGGARAN_REF,
-        logs: data.logs || INITIAL_LOGS,
+        logs: normalizedLogs,
+        muridList: data.muridList || [],
+        guruList: data.guruList || [],
         pengaturan: data.pengaturan || INITIAL_PENGATURAN,
         gasWebAppUrl: activeUrl,
         lastUpdated: data.lastUpdated || new Date().toISOString()
@@ -63,6 +73,8 @@ function getDatabase(): CentralDatabase {
     admins: INITIAL_ADMINS,
     refPelanggaran: INITIAL_PELANGGARAN_REF,
     logs: INITIAL_LOGS,
+    muridList: [],
+    guruList: [],
     pengaturan: INITIAL_PENGATURAN,
     gasWebAppUrl: fallbackUrl,
     lastUpdated: new Date().toISOString()
@@ -231,19 +243,72 @@ async function startServer() {
     return res.json({ success: true, message: 'Data jenis pelanggaran berhasil dihapus' });
   });
 
+  // GET /api/db/logs - Endpoint sinkronisasi cepat log pelanggaran antar komputer
+  app.get('/api/db/logs', (_req, res) => {
+    const db = getDatabase();
+    return res.json({ 
+      success: true, 
+      count: db.logs.length, 
+      logs: db.logs, 
+      lastUpdated: db.lastUpdated 
+    });
+  });
+
   // POST /api/db/log-pelanggaran - Tambah Log Pelanggaran dari Guru
   app.post('/api/db/log-pelanggaran', async (req, res) => {
     const { log, fileObj } = req.body;
     if (!log || !log.namaMurid) {
       return res.status(400).json({ success: false, message: 'Data log pelanggaran tidak valid' });
     }
+
+    // Normalisasi NISN ke 10-digit standar agar selalu seragam antar komputer
+    if (log.nisn) {
+      let n = String(log.nisn).trim().replace(/\D/g, '');
+      if (n && n.length < 10) n = n.padStart(10, '0');
+      log.nisn = n || log.nisn;
+    }
+
     const db = getDatabase();
-    db.logs.unshift(log);
+
+    // Pastikan siswa dari log pelanggaran SELALU terdaftar di db.muridList terpusat
+    if (!db.muridList) db.muridList = [];
+    const cleanLogName = (log.namaMurid || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const logNisn = log.nisn || '';
+    const studentFound = db.muridList.find((m: any) => {
+      const mNisn = (m.nisn || '').trim();
+      const mName = (m.nama || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      return (logNisn && mNisn && logNisn === mNisn) || (cleanLogName && mName && cleanLogName === mName);
+    });
+
+    if (!studentFound && log.namaMurid) {
+      db.muridList.push({
+        id: `MUR-${logNisn || Date.now()}`,
+        nisn: logNisn,
+        nis: '',
+        nama: log.namaMurid,
+        kelas: log.kelas || '7A',
+        jenisKelamin: 'L',
+        waliKelas: 'Guru SMPN 2 Beji',
+        guruWali: 'Guru SMPN 2 Beji'
+      });
+    }
+
+    const existingIdx = db.logs.findIndex((l: any) => l.id === log.id);
+    if (existingIdx >= 0) {
+      db.logs[existingIdx] = { ...db.logs[existingIdx], ...log };
+    } else {
+      db.logs.unshift(log);
+    }
     saveDatabase(db);
 
     let gasResult = null;
     if (db.gasWebAppUrl) {
-      gasResult = await forwardToGAS(db.gasWebAppUrl, 'submitPelanggaran', log, fileObj);
+      // Pastikan NISN dikirim ke spreadsheet dengan awalan apostrof agar Google Sheets tidak memotong angka 0
+      const gasPayload = {
+        ...log,
+        nisn: log.nisn ? "'" + log.nisn : ''
+      };
+      gasResult = await forwardToGAS(db.gasWebAppUrl, 'submitPelanggaran', gasPayload, fileObj);
       if (gasResult && gasResult.fotoUrl) {
         log.fotoBuktiUrl = gasResult.fotoUrl;
         saveDatabase(db);
@@ -252,10 +317,37 @@ async function startServer() {
 
     return res.json({ 
       success: true, 
-      message: 'Log pelanggaran berhasil dicatat dan disinkronkan',
+      message: 'Log pelanggaran berhasil dicatat dan disinkronkan ke seluruh komputer',
       data: log,
       gasSynced: !!gasResult?.success,
       fotoUrl: gasResult?.fotoUrl || log.fotoBuktiUrl
+    });
+  });
+
+  // POST /api/db/sync-students-teachers - Sinkronisasi data murid & guru ke server terpusat
+  app.post('/api/db/sync-students-teachers', (req, res) => {
+    const { muridList, guruList } = req.body;
+    const db = getDatabase();
+    let updated = false;
+
+    if (Array.isArray(muridList) && muridList.length > 0) {
+      db.muridList = muridList;
+      updated = true;
+    }
+    if (Array.isArray(guruList) && guruList.length > 0) {
+      db.guruList = guruList;
+      updated = true;
+    }
+
+    if (updated) {
+      saveDatabase(db);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Data murid dan guru berhasil diperbarui di server terpusat',
+      totalMurid: db.muridList?.length || 0,
+      totalGuru: db.guruList?.length || 0
     });
   });
 

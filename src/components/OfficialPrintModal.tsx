@@ -1,6 +1,6 @@
 import React from 'react';
 import { Printer, X, School, Award, ShieldAlert } from 'lucide-react';
-import { Murid, LogPelanggaran, PengaturanLembaga, getSanksiByPoin, getPenilaianTigaKomponen } from '../types';
+import { Murid, LogPelanggaran, PengaturanLembaga, getSanksiByPoin, getPenilaianTigaKomponen, isSameStudent } from '../types';
 
 interface OfficialPrintModalProps {
   murid: Murid;
@@ -15,7 +15,7 @@ export const OfficialPrintModal: React.FC<OfficialPrintModalProps> = ({
   pengaturan,
   onClose
 }) => {
-  const studentLogs = logs.filter(l => l.nisn === murid.nisn);
+  const studentLogs = logs.filter(l => isSameStudent(l, murid));
   const totalPoin = studentLogs.reduce((sum, l) => sum + l.totalPoin, 0);
   const sanksi = getSanksiByPoin(totalPoin);
   const evaluasiKomponen = getPenilaianTigaKomponen(studentLogs);

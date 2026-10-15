@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { 
   Murid, LogPelanggaran, PengaturanLembaga, getSanksiByPoin, 
-  getPenilaianTigaKomponen 
+  getPenilaianTigaKomponen, isSameStudent, normalizeNisn
 } from '../types';
 import { DAFTAR_KELAS } from '../data/initialData';
 
@@ -26,23 +26,34 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   const [selectedKelas, setSelectedKelas] = useState('Semua');
   const [selectedMuridDetail, setSelectedMuridDetail] = useState<Murid | null>(null);
 
-  // Hitung akumulasi poin per murid
+  // Hitung akumulasi poin per murid (Mendukung normalisasi NISN 10-digit dan pencocokan nama)
   const leaderboardData = useMemo(() => {
-    const poinMap: { [nisn: string]: number } = {};
-    const historyMap: { [nisn: string]: LogPelanggaran[] } = {};
-
-    logs.forEach(log => {
-      poinMap[log.nisn] = (poinMap[log.nisn] || 0) + log.totalPoin;
-      if (!historyMap[log.nisn]) historyMap[log.nisn] = [];
-      historyMap[log.nisn].push(log);
+    // Pastikan seluruh siswa yang tercatat di log pelanggaran selalu masuk ke leaderboard
+    const allMurid = [...muridList];
+    logs.forEach(l => {
+      if (!l.namaMurid) return;
+      const exists = allMurid.some(m => isSameStudent(l, m));
+      if (!exists) {
+        allMurid.push({
+          id: `MUR-LOG-${normalizeNisn(l.nisn) || l.namaMurid.replace(/\s+/g, '_')}`,
+          nisn: normalizeNisn(l.nisn) || '',
+          nis: '',
+          nama: l.namaMurid,
+          kelas: l.kelas || '7A',
+          jenisKelamin: 'L',
+          waliKelas: 'Guru SMPN 2 Beji',
+          guruWali: 'Guru SMPN 2 Beji'
+        });
+      }
     });
 
-    const combined = muridList.map(m => {
-      const total = poinMap[m.nisn] || 0;
+    const combined = allMurid.map(m => {
+      const studentLogs = logs.filter(l => isSameStudent(l, m));
+      const total = studentLogs.reduce((acc, curr) => acc + (curr.totalPoin || 0), 0);
       return {
         ...m,
         totalPoin: total,
-        logs: historyMap[m.nisn] || []
+        logs: studentLogs
       };
     });
 

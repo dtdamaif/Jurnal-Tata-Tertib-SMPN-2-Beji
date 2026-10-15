@@ -8,10 +8,25 @@
  *    sangat cocok saat dideploy ke GitHub Pages atau static hosting.
  */
 
-import { Murid, Guru, LogPelanggaran, PengaturanLembaga, AdminUser, JenisPelanggaran } from '../types';
+import { Murid, Guru, LogPelanggaran, PengaturanLembaga, AdminUser, JenisPelanggaran, normalizeNisn, isSameStudent } from '../types';
 
 export const SPREADSHEET_ID = '1vzxldrnNQEDkZBQfPiA7WH8K3e9eF6NlqdMmgy4nj10';
 export const DRIVE_FOLDER_ID = '18tDeAMgEFfYR5vkYJT-yiZiAJ7g4XOdH';
+
+/**
+ * Konversi format tanggal GViz Date(yyyy,m,d) ke format YYYY-MM-DD
+ */
+export function parseGvizDate(str: string): string {
+  if (!str) return '';
+  const match = str.match(/Date\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (match) {
+    const y = match[1];
+    const m = String(Number(match[2]) + 1).padStart(2, '0');
+    const d = String(match[3]).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return str;
+}
 
 // Mapping fallback wali kelas & guru pembimbing per kelas jika belum terisi di spreadsheet
 export const DEFAULT_WALI_KELAS_MAP: Record<string, { nama: string; nip: string }> = {
@@ -154,7 +169,7 @@ export async function fetchLiveMurid(knownGuru: Guru[] = []): Promise<{ muridLis
     for (let i = 0; i < rows.length; i++) {
       const cells = rows[i]?.c || [];
       const rawId = cells[0] ? String(cells[0].f || cells[0].v || '').trim() : '';
-      const rawNisn = cells[1] ? String(cells[1].f || cells[1].v || '').trim() : '';
+      const rawNisn = normalizeNisn(cells[1] ? String(cells[1].f || cells[1].v || '').trim() : '');
       const rawNis = cells[2] ? String(cells[2].f || cells[2].v || '').trim() : '';
       const rawNama = cells[3] ? String(cells[3].f || cells[3].v || '').trim() : '';
       const rawKelas = cells[4] ? String(cells[4].f || cells[4].v || '').trim().toUpperCase() : '';
@@ -262,7 +277,7 @@ export async function fetchLiveGuru(): Promise<{ guruList: Guru[]; source: 'PROX
 /**
  * Tarik catatan pelanggaran dari Google Spreadsheet tab "Log_Pelanggaran"
  */
-export async function fetchLiveLogs(): Promise<{ logsList: LogPelanggaran[]; source: 'PROXY' | 'JSONP' }> {
+export async function fetchLiveLogs(knownMurid: Murid[] = []): Promise<{ logsList: LogPelanggaran[]; source: 'PROXY' | 'JSONP' }> {
   try {
     const { rows, source } = await fetchGvizSheet('Log_Pelanggaran');
     const logsList: LogPelanggaran[] = [];
@@ -270,10 +285,10 @@ export async function fetchLiveLogs(): Promise<{ logsList: LogPelanggaran[]; sou
     for (let i = 0; i < rows.length; i++) {
       const cells = rows[i]?.c || [];
       const rawId = cells[0] ? String(cells[0].f || cells[0].v || '').trim() : '';
-      const rawTgl = cells[1] ? String(cells[1].f || cells[1].v || '').trim() : '';
+      let rawTgl = cells[1] ? String(cells[1].f || cells[1].v || '').trim() : '';
       const rawHari = cells[2] ? String(cells[2].f || cells[2].v || '').trim() : '';
       const rawKelas = cells[3] ? String(cells[3].f || cells[3].v || '').trim() : '';
-      const rawNisn = cells[4] ? String(cells[4].f || cells[4].v || '').trim() : '';
+      let rawNisn = cells[4] ? String(cells[4].f || cells[4].v || '').trim() : '';
       const rawNama = cells[5] ? String(cells[5].f || cells[5].v || '').trim() : '';
       const rawPelJSON = cells[6] ? String(cells[6].f || cells[6].v || '').trim() : '';
       const rawTotalPoin = cells[7] ? Number(cells[7].v || 0) : 0;
@@ -286,6 +301,21 @@ export async function fetchLiveLogs(): Promise<{ logsList: LogPelanggaran[]; sou
       // Skip header row
       if (rawId.toUpperCase() === 'ID' || rawTgl.toUpperCase() === 'TANGGAL' || !rawNama) {
         continue;
+      }
+
+      // Format tanggal dan normalisasi 10-digit NISN
+      rawTgl = parseGvizDate(rawTgl);
+      rawNisn = normalizeNisn(rawNisn);
+
+      // Cocokkan dengan murid terdaftar jika ada untuk memastikan konsistensi 100%
+      if (knownMurid.length > 0) {
+        const found = knownMurid.find(m => 
+          (rawNisn && normalizeNisn(m.nisn) === rawNisn) ||
+          (m.nama && rawNama && m.nama.trim().toLowerCase() === rawNama.trim().toLowerCase())
+        );
+        if (found) {
+          rawNisn = normalizeNisn(found.nisn);
+        }
       }
 
       let parsedPelanggaran: any[] = [];
@@ -657,20 +687,24 @@ export interface CentralDbPayload {
   admins?: AdminUser[];
   refPelanggaran?: JenisPelanggaran[];
   logs?: LogPelanggaran[];
+  muridList?: Murid[];
+  guruList?: Guru[];
   pengaturan?: PengaturanLembaga;
   gasWebAppUrl?: string;
 }
 
 /**
  * Tarik seluruh data dari database terpusat Cloud Server (/api/db)
- * Ini memastikan saat dibuka dari komputer lain, semua data (admin, pelanggaran, log, kop)
+ * Ini memastikan saat dibuka dari komputer lain, semua data (admin, pelanggaran, log, murid, guru, kop)
  * langsung sinkron dan muncul dengan data terbaru!
  */
 export async function fetchCentralDatabase(): Promise<{
   admins: AdminUser[];
   refPelanggaran: JenisPelanggaran[];
   logs: LogPelanggaran[];
-  pengaturan: PengaturanLembaga;
+  muridList: Murid[];
+  guruList: Guru[];
+  pengaturan?: PengaturanLembaga;
   gasWebAppUrl: string;
   source: 'SERVER' | 'CACHE';
 }> {
@@ -683,6 +717,8 @@ export async function fetchCentralDatabase(): Promise<{
           admins: json.data.admins || [],
           refPelanggaran: json.data.refPelanggaran || [],
           logs: json.data.logs || [],
+          muridList: json.data.muridList || [],
+          guruList: json.data.guruList || [],
           pengaturan: json.data.pengaturan,
           gasWebAppUrl: json.data.gasWebAppUrl || '',
           source: 'SERVER'
@@ -697,6 +733,8 @@ export async function fetchCentralDatabase(): Promise<{
   const savedAdmins = localStorage.getItem('smpn2beji_admins');
   const savedRef = localStorage.getItem('smpn2beji_ref');
   const savedLogs = localStorage.getItem('smpn2beji_logs');
+  const savedMurid = localStorage.getItem('smpn2beji_murid');
+  const savedGuru = localStorage.getItem('smpn2beji_guru');
   const savedPengaturan = localStorage.getItem('smpn2beji_pengaturan');
   const savedGas = localStorage.getItem('smpn2beji_gas_url');
 
@@ -704,10 +742,51 @@ export async function fetchCentralDatabase(): Promise<{
     admins: savedAdmins ? JSON.parse(savedAdmins) : [],
     refPelanggaran: savedRef ? JSON.parse(savedRef) : [],
     logs: savedLogs ? JSON.parse(savedLogs) : [],
+    muridList: savedMurid ? JSON.parse(savedMurid) : [],
+    guruList: savedGuru ? JSON.parse(savedGuru) : [],
     pengaturan: savedPengaturan ? JSON.parse(savedPengaturan) : undefined,
     gasWebAppUrl: savedGas || '',
     source: 'CACHE'
   };
+}
+
+/**
+ * Polling berkala log pelanggaran dari server terpusat untuk sinkronisasi otomatis antar komputer
+ */
+export async function fetchLivePollLogs(): Promise<{ success: boolean; count: number; logs: LogPelanggaran[]; lastUpdated?: string } | null> {
+  try {
+    const res = await fetch('/api/db/logs', { cache: 'no-cache' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.logs)) {
+        return {
+          success: true,
+          count: json.count || json.logs.length,
+          logs: json.logs,
+          lastUpdated: json.lastUpdated
+        };
+      }
+    }
+  } catch {
+    // Abaikan jika offline / dev
+  }
+  return null;
+}
+
+/**
+ * Simpan data siswa & guru ke server terpusat untuk dibagikan ke seluruh komputer
+ */
+export async function syncStudentsAndTeachersToServer(muridList: Murid[], guruList: Guru[]): Promise<boolean> {
+  try {
+    const res = await fetch('/api/db/sync-students-teachers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ muridList, guruList })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -779,18 +858,25 @@ export async function deleteRefPelanggaranOnline(id: string): Promise<{ success:
 export async function saveLogOnline(
   log: LogPelanggaran,
   fileObj?: { base64: string; mimeType: string; filename: string }
-): Promise<{ success: boolean; message: string; fotoUrl?: string; gasSynced?: boolean }> {
+): Promise<{ success: boolean; message: string; fotoUrl?: string; gasSynced?: boolean; log?: LogPelanggaran }> {
+  const cleanLog: LogPelanggaran = {
+    ...log,
+    nisn: normalizeNisn(log.nisn)
+  };
   try {
     const res = await fetch('/api/db/log-pelanggaran', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ log, fileObj })
+      body: JSON.stringify({ log: cleanLog, fileObj })
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      return { ...data, log: cleanLog };
+    }
   } catch (err: any) {
     console.warn('saveLogOnline server note:', err);
   }
-  return { success: true, message: 'Log dicatat di penyimpanan lokal.', fotoUrl: log.fotoBuktiUrl, gasSynced: false };
+  return { success: true, message: 'Log dicatat di penyimpanan lokal.', fotoUrl: cleanLog.fotoBuktiUrl, gasSynced: false, log: cleanLog };
 }
 
 /**

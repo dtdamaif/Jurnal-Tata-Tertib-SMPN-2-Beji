@@ -12,7 +12,8 @@ import { GasDocsView } from './components/GasDocsView';
 import { OfficialPrintModal } from './components/OfficialPrintModal';
 import { ConnectionModal } from './components/ConnectionModal';
 import { 
-  AdminUser, Guru, Murid, JenisPelanggaran, LogPelanggaran, PengaturanLembaga 
+  AdminUser, Guru, Murid, JenisPelanggaran, LogPelanggaran, PengaturanLembaga,
+  isSameStudent, normalizeNisn
 } from './types';
 import { 
   INITIAL_ADMINS, INITIAL_GURU, INITIAL_MURID, 
@@ -27,6 +28,8 @@ import {
   fetchLivePengaturan,
   saveOnlinePengaturan,
   fetchCentralDatabase,
+  fetchLivePollLogs,
+  syncStudentsAndTeachersToServer,
   saveAdminOnline,
   deleteAdminOnline,
   saveRefPelanggaranOnline,
@@ -99,7 +102,7 @@ export default function App() {
   // Printable Report Modal
   const [printMurid, setPrintMurid] = useState<Murid | null>(null);
 
-  // Auto-fetch Real Data from Google Spreadsheet on Start
+  // Auto-fetch Real Data from Central Server & Google Spreadsheet on Start
   useEffect(() => {
     let isMounted = true;
     async function loadSpreadsheetData() {
@@ -118,6 +121,13 @@ export default function App() {
             if (centralDb.logs && centralDb.logs.length > 0) {
               setLogs(centralDb.logs);
             }
+            // Langsung set muridList & guruList dari server terpusat agar langsung tampil di komputer lain!
+            if (centralDb.muridList && centralDb.muridList.length > 0) {
+              setMuridList(centralDb.muridList);
+            }
+            if (centralDb.guruList && centralDb.guruList.length > 0) {
+              setGuruList(centralDb.guruList);
+            }
             if (centralDb.pengaturan && (centralDb.pengaturan.namaSekolah || centralDb.pengaturan.npsn)) {
               setPengaturan(centralDb.pengaturan);
             }
@@ -130,26 +140,47 @@ export default function App() {
           console.warn('Central DB fetch note:', dbErr);
         }
 
-        // 1. Fetch live teachers (45+ guru dari tab "Guru")
-        const { guruList: liveGurus } = await fetchLiveGuru();
-        if (isMounted && liveGurus.length > 0) {
-          setGuruList(liveGurus);
+        // 1. Fetch live teachers (tab "Guru" dari Google Spreadsheet)
+        let liveGurus: Guru[] = [];
+        try {
+          const resG = await fetchLiveGuru();
+          liveGurus = resG.guruList || [];
+          if (isMounted && liveGurus.length > 0) {
+            setGuruList(liveGurus);
+          }
+        } catch (gErr) {
+          console.warn('Live guru fetch note:', gErr);
         }
 
-        // 2. Fetch live students (882 murid dari tab "Murid")
-        const { muridList: liveMurids } = await fetchLiveMurid(liveGurus);
-        if (isMounted && liveMurids.length > 0) {
-          setMuridList(liveMurids);
+        // 2. Fetch live students (882 murid dari tab "Murid" Google Spreadsheet)
+        let liveMurids: Murid[] = [];
+        try {
+          const resM = await fetchLiveMurid(liveGurus.length > 0 ? liveGurus : guruList);
+          liveMurids = resM.muridList || [];
+          if (isMounted && liveMurids.length > 0) {
+            setMuridList(liveMurids);
+          }
+        } catch (mErr) {
+          console.warn('Live murid fetch note:', mErr);
+        }
+
+        // Simpan data murid & guru ke server database agar langsung siap untuk seluruh komputer
+        if (liveMurids.length > 0 || liveGurus.length > 0) {
+          syncStudentsAndTeachersToServer(liveMurids, liveGurus).catch(() => {});
         }
 
         // 3. Fetch live violation logs dari tab "Log_Pelanggaran"
-        const { logsList: liveLogs } = await fetchLiveLogs();
-        if (isMounted && liveLogs.length > 0) {
-          setLogs(prev => {
-            const existingIds = new Set(prev.map(l => l.id));
-            const newOnes = liveLogs.filter(l => !existingIds.has(l.id));
-            return [...newOnes, ...prev];
-          });
+        try {
+          const { logsList: liveLogs } = await fetchLiveLogs();
+          if (isMounted && liveLogs.length > 0) {
+            setLogs(prev => {
+              const existingIds = new Set(prev.map(l => l.id));
+              const newOnes = liveLogs.filter(l => !existingIds.has(l.id));
+              return [...newOnes, ...prev];
+            });
+          }
+        } catch (lErr) {
+          console.warn('Live logs fetch note:', lErr);
         }
 
         // 4. Fetch live admins jika sheet Admin berisi data kustom
@@ -205,6 +236,94 @@ export default function App() {
     loadSpreadsheetData();
     return () => { isMounted = false; };
   }, []);
+
+  // SINKRONISASI OTOMATIS REAL-TIME DARI SELURUH KOMPUTER (Setiap 4 Detik)
+  useEffect(() => {
+    let isPolling = true;
+
+    const intervalId = setInterval(async () => {
+      if (!isPolling) return;
+      try {
+        const pollRes = await fetchLivePollLogs();
+        if (pollRes && pollRes.logs && isPolling) {
+          setLogs(prev => {
+            const prevIds = new Set(prev.map(l => l.id));
+            const newLogs = pollRes.logs.filter(l => !prevIds.has(l.id));
+            if (newLogs.length > 0) {
+              const updated = [...newLogs, ...prev];
+              const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              setLastSyncTime(nowStr);
+              return updated;
+            }
+            return prev;
+          });
+        }
+      } catch {
+        // Polling background silent fallback
+      }
+    }, 4000);
+
+    return () => {
+      isPolling = false;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  // SINKRONISASI BERKALA KE SPREADSHEET (Setiap 30 Detik)
+  useEffect(() => {
+    let isRunning = true;
+    const sheetSyncInterval = setInterval(async () => {
+      if (!isRunning) return;
+      try {
+        const { logsList } = await fetchLiveLogs();
+        if (isRunning && logsList.length > 0) {
+          setLogs(prev => {
+            const existingIds = new Set(prev.map(l => l.id));
+            const newOnes = logsList.filter(l => !existingIds.has(l.id));
+            if (newOnes.length > 0) {
+              const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              setLastSyncTime(nowStr);
+              return [...newOnes, ...prev];
+            }
+            return prev;
+          });
+        }
+      } catch {}
+    }, 30000);
+
+    return () => {
+      isRunning = false;
+      clearInterval(sheetSyncInterval);
+    };
+  }, []);
+
+  // JAMINAN 100%: Seluruh siswa yang tercatat di log pelanggaran OTOMATIS ada di muridList
+  // Ini mencegah siswa berpoin hilang di komputer lain jika master spreadsheet lambat memuat
+  useEffect(() => {
+    if (logs.length === 0) return;
+    setMuridList(prev => {
+      let changed = false;
+      const updated = [...prev];
+      logs.forEach(log => {
+        if (!log.namaMurid) return;
+        const found = updated.some(m => isSameStudent(log, m));
+        if (!found) {
+          changed = true;
+          updated.push({
+            id: `MUR-LOG-${normalizeNisn(log.nisn) || log.namaMurid.replace(/\s+/g, '_')}`,
+            nisn: normalizeNisn(log.nisn) || '',
+            nis: '',
+            nama: log.namaMurid,
+            kelas: log.kelas || '7A',
+            jenisKelamin: 'L',
+            waliKelas: 'Guru SMPN 2 Beji',
+            guruWali: 'Guru SMPN 2 Beji'
+          });
+        }
+      });
+      return changed ? updated : prev;
+    });
+  }, [logs]);
 
   // Sync to LocalStorage
   useEffect(() => {
