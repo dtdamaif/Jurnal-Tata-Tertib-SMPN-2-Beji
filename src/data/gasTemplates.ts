@@ -39,6 +39,7 @@ function doGet(e) {
     else if (action === 'getGuru') result = syncGuruFromSpreadsheet();
     else if (action === 'getLeaderboard') result = { success: true, data: getPublicLeaderboard() };
     else if (action === 'getRef') result = { success: true, data: getRefPelanggaran() };
+    else if (action === 'getPengaturan') result = getPengaturanFromSheet();
     else result = { success: false, message: 'Action API tidak dikenal' };
 
     return ContentService.createTextOutput(JSON.stringify(result))
@@ -53,7 +54,7 @@ function doGet(e) {
 }
 
 /**
- * Handle POST request dari Web App / React (Submit Pelanggaran, Foto Drive, Update Data)
+ * Handle POST request dari Web App / React (Submit Pelanggaran, Foto Drive, Update Data, Pengaturan & Kop)
  */
 function doPost(e) {
   try {
@@ -71,10 +72,20 @@ function doPost(e) {
       result = submitPelanggaran(postData.payload, postData.fileObj);
     } else if (action === 'saveMurid') {
       result = saveMurid(postData.payload);
+    } else if (action === 'saveAdmin') {
+      result = saveAdmin(postData.payload);
+    } else if (action === 'deleteAdmin') {
+      result = deleteAdmin(postData.payload ? postData.payload.id : postData.id);
     } else if (action === 'saveRefPelanggaran') {
       result = saveRefPelanggaran(postData.payload);
     } else if (action === 'deleteRefPelanggaran') {
-      result = deleteRefPelanggaran(postData.id);
+      result = deleteRefPelanggaran(postData.payload ? postData.payload.id : postData.id);
+    } else if (action === 'savePengaturan') {
+      result = savePengaturanToSheet(postData.payload);
+    } else if (action === 'getPengaturan') {
+      result = getPengaturanFromSheet();
+    } else if (action === 'syncAllToSheets') {
+      result = syncAllToSheets(postData.payload);
     } else {
       result = { success: false, message: 'Action POST tidak dikenal: ' + action };
     }
@@ -568,6 +579,201 @@ function saveMurid(muridObj) {
     muridObj.guruWali || muridObj.waliKelas
   ]);
   return { success: true, message: 'Murid baru berhasil ditambahkan.', id: newId };
+}
+
+/**
+ * Simpan Pengaturan Lembaga & Kop Surat ke Tab "Pengaturan" di Google Sheets
+ */
+function savePengaturanToSheet(settings) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.PENGATURAN);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEETS.PENGATURAN);
+      sheet.appendRow(['Key', 'Value']);
+      sheet.setFrozenRows(1);
+    }
+
+    const keys = Object.keys(settings);
+    const existingData = sheet.getDataRange().getValues();
+    const keyRowMap = {};
+    for (let i = 1; i < existingData.length; i++) {
+      const k = String(existingData[i][0]).trim();
+      if (k) keyRowMap[k] = i + 1;
+    }
+
+    keys.forEach(k => {
+      const val = typeof settings[k] === 'object' ? JSON.stringify(settings[k]) : String(settings[k] || '');
+      if (keyRowMap[k]) {
+        sheet.getRange(keyRowMap[k], 2).setValue(val);
+      } else {
+        sheet.appendRow([k, val]);
+      }
+    });
+
+    return { 
+      success: true, 
+      message: 'Pengaturan lembaga dan kop surat resmi berhasil disimpan ke Google Spreadsheet tab "Pengaturan"!' 
+    };
+  } catch (err) {
+    return { success: false, message: 'Gagal menyimpan ke Google Spreadsheet: ' + err.toString() };
+  }
+}
+
+/**
+ * Ambil Pengaturan Lembaga & Kop Surat dari Tab "Pengaturan" di Google Sheets
+ */
+function getPengaturanFromSheet() {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.PENGATURAN);
+    if (!sheet) return { success: false, message: 'Sheet Pengaturan tidak ditemukan' };
+    const data = sheet.getDataRange().getValues();
+    const settings = {};
+    for (let i = 1; i < data.length; i++) {
+      const k = String(data[i][0]).trim();
+      const v = data[i][1];
+      if (k) settings[k] = v;
+    }
+    return { success: true, data: settings };
+  } catch (err) {
+    return { success: false, message: err.toString() };
+  }
+}
+
+/**
+ * Simpan atau Perbarui Data Admin di Tab "Admin" Google Sheets
+ */
+function saveAdmin(adminObj) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    let sheet = ss.getSheetByName(CONFIG.SHEETS.ADMIN);
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.SHEETS.ADMIN);
+      sheet.appendRow(['ID', 'Username', 'Password', 'Nama', 'Role', 'Email', 'status']);
+      sheet.setFrozenRows(1);
+    }
+    const data = sheet.getDataRange().getValues();
+    
+    if (adminObj.id) {
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][0] === adminObj.id) {
+          sheet.getRange(i + 1, 2).setValue(adminObj.username);
+          sheet.getRange(i + 1, 3).setValue(adminObj.password || CONFIG.ADMIN_DEFAULT_PASS);
+          sheet.getRange(i + 1, 4).setValue(adminObj.nama);
+          sheet.getRange(i + 1, 5).setValue(adminObj.role);
+          sheet.getRange(i + 1, 6).setValue(adminObj.email || '');
+          sheet.getRange(i + 1, 7).setValue(adminObj.status || 'Aktif');
+          return { success: true, message: 'Data admin [' + adminObj.nama + '] berhasil disimpan ke spreadsheet.' };
+        }
+      }
+    }
+    
+    const newId = 'ADM-' + Date.now();
+    sheet.appendRow([
+      newId,
+      adminObj.username,
+      adminObj.password || CONFIG.ADMIN_DEFAULT_PASS,
+      adminObj.nama,
+      adminObj.role || 'Admin',
+      adminObj.email || '',
+      adminObj.status || 'Aktif'
+    ]);
+    return { success: true, message: 'Admin baru berhasil ditambahkan ke spreadsheet.', id: newId };
+  } catch (err) {
+    return { success: false, message: 'Gagal saveAdmin: ' + err.toString() };
+  }
+}
+
+/**
+ * Hapus Data Admin dari Tab "Admin" Google Sheets
+ */
+function deleteAdmin(adminId) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(CONFIG.SHEETS.ADMIN);
+    if (!sheet) return { success: false, message: 'Sheet Admin tidak ditemukan' };
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === adminId) {
+        sheet.deleteRow(i + 1);
+        return { success: true, message: 'Admin berhasil dihapus dari spreadsheet.' };
+      }
+    }
+    return { success: false, message: 'Data admin tidak ditemukan.' };
+  } catch (err) {
+    return { success: false, message: 'Gagal deleteAdmin: ' + err.toString() };
+  }
+}
+
+/**
+ * Tulis & Sinkronkan Seluruh Data (Admin, 90 Jenis Pelanggaran, Pengaturan) ke Google Spreadsheet
+ */
+function syncAllToSheets(data) {
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+    
+    // 1. Simpan Seluruh Admin ke Tab "Admin"
+    if (data.admins && Array.isArray(data.admins)) {
+      let sheetAdmin = ss.getSheetByName(CONFIG.SHEETS.ADMIN);
+      if (!sheetAdmin) {
+        sheetAdmin = ss.insertSheet(CONFIG.SHEETS.ADMIN);
+        sheetAdmin.appendRow(['ID', 'Username', 'Password', 'Nama', 'Role', 'Email', 'status']);
+        sheetAdmin.setFrozenRows(1);
+      }
+      const lastRow = sheetAdmin.getLastRow();
+      if (lastRow > 1) {
+        sheetAdmin.deleteRows(2, lastRow - 1);
+      }
+      data.admins.forEach(adm => {
+        sheetAdmin.appendRow([
+          adm.id || ('ADM-' + Date.now()),
+          adm.username,
+          adm.password || CONFIG.ADMIN_DEFAULT_PASS,
+          adm.nama,
+          adm.role || 'Admin',
+          adm.email || '',
+          adm.status || 'Aktif'
+        ]);
+      });
+    }
+
+    // 2. Simpan Seluruh Master Pelanggaran ke Tab "Ref_Pelanggaran"
+    if (data.refPelanggaran && Array.isArray(data.refPelanggaran)) {
+      let sheetRef = ss.getSheetByName(CONFIG.SHEETS.REF_PELANGGARAN);
+      if (!sheetRef) {
+        sheetRef = ss.insertSheet(CONFIG.SHEETS.REF_PELANGGARAN);
+        sheetRef.appendRow(['ID', 'Kode', 'Komponen', 'SubKomponen', 'NamaPelanggaran', 'Poin']);
+        sheetRef.setFrozenRows(1);
+      }
+      const lastRefRow = sheetRef.getLastRow();
+      if (lastRefRow > 1) {
+        sheetRef.deleteRows(2, lastRefRow - 1);
+      }
+      data.refPelanggaran.forEach(pel => {
+        sheetRef.appendRow([
+          pel.id || ('PEL-' + pel.kode),
+          pel.kode,
+          pel.komponen,
+          pel.subKomponen,
+          pel.namaPelanggaran,
+          Number(pel.poin)
+        ]);
+      });
+    }
+
+    // 3. Simpan Pengaturan Lembaga ke Tab "Pengaturan"
+    if (data.pengaturan && typeof data.pengaturan === 'object') {
+      savePengaturanToSheet(data.pengaturan);
+    }
+
+    return { 
+      success: true, 
+      message: 'Berhasil menyinkronkan seluruh data (Admin, Master Pelanggaran, dan Pengaturan) ke Google Spreadsheet!' 
+    };
+  } catch (err) {
+    return { success: false, message: 'Gagal syncAllToSheets: ' + err.toString() };
+  }
 }
 
 `;

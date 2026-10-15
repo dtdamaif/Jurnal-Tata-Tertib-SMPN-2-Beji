@@ -22,6 +22,18 @@ import {
   fetchLiveMurid, 
   fetchLiveGuru, 
   fetchLiveLogs, 
+  fetchLiveAdmins,
+  fetchLiveRefPelanggaran,
+  fetchLivePengaturan,
+  saveOnlinePengaturan,
+  fetchCentralDatabase,
+  saveAdminOnline,
+  deleteAdminOnline,
+  saveRefPelanggaranOnline,
+  deleteRefPelanggaranOnline,
+  saveLogOnline,
+  saveGasUrlOnline,
+  syncAllToGoogleSheets,
   sendViolationToGAS,
   SPREADSHEET_ID,
   DRIVE_FOLDER_ID
@@ -93,6 +105,30 @@ export default function App() {
     async function loadSpreadsheetData() {
       setIsSyncingAll(true);
       try {
+        // 0. Ambil Database Terpusat dari Cloud Server (Sinkronisasi Seluruh Komputer & Device)
+        try {
+          const centralDb = await fetchCentralDatabase();
+          if (isMounted) {
+            if (centralDb.admins && centralDb.admins.length > 0) {
+              setAdmins(centralDb.admins);
+            }
+            if (centralDb.refPelanggaran && centralDb.refPelanggaran.length > 0) {
+              setRefPelanggaranList(centralDb.refPelanggaran);
+            }
+            if (centralDb.logs && centralDb.logs.length > 0) {
+              setLogs(centralDb.logs);
+            }
+            if (centralDb.pengaturan && centralDb.pengaturan.namaSekolah) {
+              setPengaturan(centralDb.pengaturan);
+            }
+            if (centralDb.gasWebAppUrl) {
+              setGasWebAppUrl(centralDb.gasWebAppUrl);
+            }
+          }
+        } catch (dbErr) {
+          console.warn('Central DB fetch note:', dbErr);
+        }
+
         // 1. Fetch live teachers (45+ guru dari tab "Guru")
         const { guruList: liveGurus } = await fetchLiveGuru();
         if (isMounted && liveGurus.length > 0) {
@@ -113,6 +149,36 @@ export default function App() {
             const newOnes = liveLogs.filter(l => !existingIds.has(l.id));
             return [...newOnes, ...prev];
           });
+        }
+
+        // 4. Fetch live admins jika sheet Admin berisi data kustom
+        try {
+          const { adminsList: liveAdmins } = await fetchLiveAdmins();
+          if (isMounted && liveAdmins.length > 0) {
+            setAdmins(liveAdmins);
+          }
+        } catch (e) {
+          console.warn('Note on loading live admins:', e);
+        }
+
+        // 5. Fetch live jenis pelanggaran jika sheet Ref_Pelanggaran berisi data
+        try {
+          const { refList: liveRefs } = await fetchLiveRefPelanggaran();
+          if (isMounted && liveRefs.length > 0) {
+            setRefPelanggaranList(liveRefs);
+          }
+        } catch (e) {
+          console.warn('Note on loading live refs:', e);
+        }
+
+        // 6. Fetch live pengaturan lembaga & kop surat dari server / spreadsheet
+        try {
+          const { pengaturan: liveSettings } = await fetchLivePengaturan();
+          if (isMounted && liveSettings && liveSettings.namaSekolah) {
+            setPengaturan(prev => ({ ...prev, ...liveSettings }));
+          }
+        } catch (e) {
+          console.warn('Note on loading online settings:', e);
         }
 
         if (isMounted) {
@@ -220,21 +286,18 @@ export default function App() {
   ) => {
     setLogs(prev => [newLog, ...prev]);
 
-    // Jika Web App URL Google Apps Script disetel, kirim real-time ke Google Drive & Sheets
-    if (gasWebAppUrl && gasWebAppUrl.trim().startsWith('http')) {
-      try {
-        const res = await sendViolationToGAS(gasWebAppUrl, newLog, fileObj);
-        if (res.success && res.fotoUrl) {
-          setLogs(prev => prev.map(l => l.id === newLog.id ? { ...l, fotoBuktiUrl: res.fotoUrl! } : l));
-        }
-      } catch (err) {
-        console.error('Failed to send to Google Apps Script:', err);
+    try {
+      const res = await saveLogOnline(newLog, fileObj);
+      if (res && res.fotoUrl) {
+        setLogs(prev => prev.map(l => l.id === newLog.id ? { ...l, fotoBuktiUrl: res.fotoUrl! } : l));
       }
+    } catch (err) {
+      console.error('Failed to send violation log online:', err);
     }
   };
 
   // Fitur A: CRUD Admin
-  const handleSaveAdmin = (adm: AdminUser) => {
+  const handleSaveAdmin = async (adm: AdminUser) => {
     setAdmins(prev => {
       const idx = prev.findIndex(a => a.id === adm.id);
       if (idx >= 0) {
@@ -244,10 +307,20 @@ export default function App() {
       }
       return [...prev, adm];
     });
+    try {
+      await saveAdminOnline(adm);
+    } catch (err) {
+      console.error('Failed to save admin online:', err);
+    }
   };
 
-  const handleDeleteAdmin = (id: string) => {
+  const handleDeleteAdmin = async (id: string) => {
     setAdmins(prev => prev.filter(a => a.id !== id));
+    try {
+      await deleteAdminOnline(id);
+    } catch (err) {
+      console.error('Failed to delete admin online:', err);
+    }
   };
 
   // Fitur B: CRUD Guru
@@ -354,13 +427,33 @@ export default function App() {
     }
   };
 
-  // Fitur D: Pengaturan Lembaga
-  const handleSavePengaturan = (newSettings: PengaturanLembaga) => {
+  // Fitur D: Pengaturan Lembaga & Kop Surat Online
+  const handleSavePengaturan = async (newSettings: PengaturanLembaga) => {
     setPengaturan(newSettings);
+    const result = await saveOnlinePengaturan(newSettings, gasWebAppUrl);
+    return result;
   };
 
-  // Master Pelanggaran CRUD
-  const handleSavePelanggaran = (pel: JenisPelanggaran) => {
+  // Tarik Pengaturan Online dari Spreadsheet / Server
+  const handleSyncPengaturan = async () => {
+    setIsSyncingAll(true);
+    try {
+      const { pengaturan: liveSettings } = await fetchLivePengaturan();
+      if (liveSettings && liveSettings.namaSekolah) {
+        setPengaturan(prev => ({ ...prev, ...liveSettings }));
+        return { success: true, count: 1, message: 'Pengaturan lembaga dan kop surat berhasil dimuat online!' };
+      }
+      return { success: false, message: 'Belum ada data pengaturan kustom di server/spreadsheet' };
+    } catch (err: any) {
+      console.error('Error syncing pengaturan:', err);
+      throw err;
+    } finally {
+      setIsSyncingAll(false);
+    }
+  };
+
+  // Master Pelanggaran CRUD (Tersimpan Online ke Cloud & Spreadsheet)
+  const handleSavePelanggaran = async (pel: JenisPelanggaran) => {
     setRefPelanggaranList(prev => {
       const idx = prev.findIndex(p => p.id === pel.id);
       if (idx >= 0) {
@@ -370,14 +463,48 @@ export default function App() {
       }
       return [pel, ...prev];
     });
+    try {
+      await saveRefPelanggaranOnline(pel);
+    } catch (err) {
+      console.error('Failed to save ref pelanggaran online:', err);
+    }
   };
 
-  const handleDeletePelanggaran = (id: string) => {
+  const handleDeletePelanggaran = async (id: string) => {
     setRefPelanggaranList(prev => prev.filter(p => p.id !== id));
+    try {
+      await deleteRefPelanggaranOnline(id);
+    } catch (err) {
+      console.error('Failed to delete ref pelanggaran online:', err);
+    }
   };
 
   const handleResetDefaultPelanggaran = () => {
     setRefPelanggaranList(INITIAL_PELANGGARAN_REF);
+  };
+
+  // Simpan URL Google Apps Script Web App ke Server Cloud
+  const handleSaveGasWebAppUrl = async (url: string) => {
+    setGasWebAppUrl(url);
+    try {
+      await saveGasUrlOnline(url);
+    } catch (err) {
+      console.error('Failed to save GAS url online:', err);
+    }
+  };
+
+  // Kirim / Push Seluruh Data (Admin, Master Pelanggaran, Pengaturan) ke Google Sheets
+  const handlePushAllToSheets = async () => {
+    setIsSyncingAll(true);
+    try {
+      const res = await syncAllToGoogleSheets(gasWebAppUrl);
+      return res;
+    } catch (err: any) {
+      console.error('Push to sheets error:', err);
+      return { success: false, message: err?.message || 'Gagal mengirim ke spreadsheet' };
+    } finally {
+      setIsSyncingAll(false);
+    }
   };
 
   return (
@@ -448,12 +575,14 @@ export default function App() {
             onSyncSpreadsheet={handleSyncSpreadsheet}
             onSyncGuruSpreadsheet={handleSyncGuruSpreadsheet}
             onSavePengaturan={handleSavePengaturan}
+            onSyncPengaturan={handleSyncPengaturan}
             onOpenReportPrint={(murid) => setPrintMurid(murid)}
             gasWebAppUrl={gasWebAppUrl}
-            onSaveGasWebAppUrl={(url) => setGasWebAppUrl(url)}
+            onSaveGasWebAppUrl={handleSaveGasWebAppUrl}
             onOpenConnectionModal={() => setConnectionModalOpen(true)}
             isLiveConnected={isLiveConnected}
             lastSyncTime={lastSyncTime}
+            onPushAllToSheets={handlePushAllToSheets}
           />
         )}
 
@@ -483,9 +612,10 @@ export default function App() {
         totalMurid={muridList.length}
         totalGuru={guruList.length}
         gasWebAppUrl={gasWebAppUrl}
-        onSaveGasWebAppUrl={(url) => setGasWebAppUrl(url)}
+        onSaveGasWebAppUrl={handleSaveGasWebAppUrl}
         onTriggerSyncAll={handleSyncAll}
         isSyncing={isSyncingAll}
+        onPushAllToSheets={handlePushAllToSheets}
       />
 
       {/* Footer */}

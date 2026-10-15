@@ -315,9 +315,9 @@ export const GasDocsView: React.FC = () => {
             <li className="flex gap-3">
               <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center shrink-0">6</span>
               <div>
-                <strong className="text-emerald-700">Selesai! Web App Siap Digunakan:</strong>
+                <strong className="text-emerald-700">Selesai! Web App Siap Digunakan & Terhubung:</strong>
                 <p className="text-slate-500 text-xs mt-0.5">
-                  Salin Web App URL yang diberikan. URL tersebut dapat langsung dibuka oleh publik (Leaderboard), guru (Input Pelanggaran), dan admin sekolah!
+                  Salin Web App URL (berakhiran <code>/exec</code>). Tempelkan URL tersebut ke aplikasi ini di panel <strong>Pengaturan & Kop</strong> atau tombol <strong>Status Koneksi</strong> di pojok kanan atas, lalu klik <strong>Simpan URL</strong> dan <strong>Kirim Seluruh Data ke Sheets</strong>. Seluruh data Admin, 90 Jenis Pelanggaran, dan Pengaturan Kop Surat akan langsung tersimpan di Google Spreadsheet Anda!
                 </p>
               </div>
             </li>

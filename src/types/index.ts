@@ -1,6 +1,7 @@
 export interface AdminUser {
   id: string;
   username: string;
+  password?: string;
   nama: string;
   role: 'Super Admin' | 'Admin BK';
   email: string;

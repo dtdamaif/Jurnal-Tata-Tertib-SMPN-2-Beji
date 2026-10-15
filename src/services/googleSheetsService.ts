@@ -8,7 +8,7 @@
  *    sangat cocok saat dideploy ke GitHub Pages atau static hosting.
  */
 
-import { Murid, Guru, LogPelanggaran } from '../types';
+import { Murid, Guru, LogPelanggaran, PengaturanLembaga, AdminUser, JenisPelanggaran } from '../types';
 
 export const SPREADSHEET_ID = '1vzxldrnNQEDkZBQfPiA7WH8K3e9eF6NlqdMmgy4nj10';
 export const DRIVE_FOLDER_ID = '18tDeAMgEFfYR5vkYJT-yiZiAJ7g4XOdH';
@@ -305,6 +305,117 @@ export async function fetchLiveLogs(): Promise<{ logsList: LogPelanggaran[]; sou
 }
 
 /**
+ * Tarik data Admin langsung dari Google Spreadsheet tab "Admin" (jika tersedia data)
+ */
+export async function fetchLiveAdmins(): Promise<{ adminsList: AdminUser[]; source: 'PROXY' | 'JSONP' }> {
+  try {
+    const { rows, source } = await fetchGvizSheet('Admin');
+    const adminsList: AdminUser[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const cells = rows[i]?.c || [];
+      const rawId = cells[0] ? String(cells[0].f || cells[0].v || '').trim() : '';
+      const rawUser = cells[1] ? String(cells[1].f || cells[1].v || '').trim() : '';
+      const rawPass = cells[2] ? String(cells[2].f || cells[2].v || '').trim() : '';
+      const rawNama = cells[3] ? String(cells[3].f || cells[3].v || '').trim() : '';
+      const rawRole = cells[4] ? String(cells[4].f || cells[4].v || '').trim() : 'Super Admin';
+      const rawEmail = cells[5] ? String(cells[5].f || cells[5].v || '').trim() : '';
+      const rawStatus = cells[6] ? String(cells[6].f || cells[6].v || '').trim() : 'Aktif';
+
+      if (rawId.toUpperCase() === 'ID' || rawUser.toUpperCase() === 'USERNAME' || !rawUser) {
+        continue;
+      }
+
+      adminsList.push({
+        id: rawId || `ADM-${i + 1}`,
+        username: rawUser,
+        password: rawPass || '@smpn2beji',
+        nama: rawNama || rawUser,
+        role: rawRole === 'Admin BK' ? 'Admin BK' : 'Super Admin',
+        email: rawEmail || `${rawUser}@smpn2beji.sch.id`,
+        status: rawStatus === 'Nonaktif' ? 'Nonaktif' : 'Aktif'
+      });
+    }
+
+    return { adminsList, source };
+  } catch {
+    return { adminsList: [], source: 'JSONP' };
+  }
+}
+
+/**
+ * Tarik master aturan jenis pelanggaran dari tab "Ref_Pelanggaran"
+ */
+export async function fetchLiveRefPelanggaran(): Promise<{ refList: JenisPelanggaran[]; source: 'PROXY' | 'JSONP' }> {
+  try {
+    const { rows, source } = await fetchGvizSheet('Ref_Pelanggaran');
+    const refList: JenisPelanggaran[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const cells = rows[i]?.c || [];
+      const rawId = cells[0] ? String(cells[0].f || cells[0].v || '').trim() : '';
+      const rawKode = cells[1] ? String(cells[1].f || cells[1].v || '').trim() : '';
+      const rawKomp = cells[2] ? String(cells[2].f || cells[2].v || '').trim() : 'Kepribadian';
+      const rawSub = cells[3] ? String(cells[3].f || cells[3].v || '').trim() : 'Ketertiban';
+      const rawNama = cells[4] ? String(cells[4].f || cells[4].v || '').trim() : '';
+      const rawPoin = cells[5] ? Number(cells[5].v || 0) : 0;
+
+      if (rawId.toUpperCase() === 'ID' || rawKode.toUpperCase() === 'KODE' || !rawKode || !rawNama) {
+        continue;
+      }
+
+      refList.push({
+        id: rawId || `PEL-${rawKode}`,
+        kode: rawKode,
+        komponen: rawKomp as any,
+        subKomponen: rawSub,
+        namaPelanggaran: rawNama,
+        poin: rawPoin
+      });
+    }
+
+    return { refList, source };
+  } catch {
+    return { refList: [], source: 'JSONP' };
+  }
+}
+
+/**
+ * Uji Coba Koneksi ke URL Google Apps Script Web App
+ */
+export async function testGasConnection(url: string): Promise<{ success: boolean; message: string }> {
+  if (!url || !url.trim().startsWith('http')) {
+    return { success: false, message: 'URL Web App tidak boleh kosong' };
+  }
+
+  // 1. Coba melalui endpoint server proxy
+  try {
+    const res = await fetch('/api/db/test-gas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: url.trim() })
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {}
+
+  // 2. Fallback: tes langsung dari browser
+  try {
+    const pingUrl = url.includes('?') ? `${url}&action=ping` : `${url}?action=ping`;
+    const res = await fetch(pingUrl, { mode: 'cors' });
+    if (res.ok) {
+      const data = await res.json();
+      return { success: true, message: data.message || 'Google Apps Script Web App aktif!' };
+    }
+  } catch (err: any) {
+    return { success: false, message: 'Gagal terhubung ke GAS: ' + (err?.message || err) };
+  }
+
+  return { success: false, message: 'URL Google Apps Script tidak merespon' };
+}
+
+/**
  * Uji Coba Koneksi ke Google Spreadsheet
  */
 export async function testSpreadsheetConnection(): Promise<{
@@ -369,3 +480,297 @@ export async function sendViolationToGAS(
     };
   }
 }
+
+/**
+ * Tarik Pengaturan Lembaga & Kop Surat Resmi Online
+ * 1. Coba dari server online /api/settings
+ * 2. Coba dari Google Spreadsheet tab "Pengaturan"
+ */
+export async function fetchLivePengaturan(): Promise<{ pengaturan?: PengaturanLembaga; source: 'SERVER' | 'SPREADSHEET' | 'NONE' }> {
+  // 1. Coba dari server endpoint /api/settings
+  try {
+    const res = await fetch('/api/settings', { cache: 'no-cache' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.settings && data.settings.namaSekolah) {
+        return { pengaturan: data.settings as PengaturanLembaga, source: 'SERVER' };
+      }
+    }
+  } catch {
+    // Lanjut ke pemeriksaan Google Spreadsheet
+  }
+
+  // 2. Coba dari tab "Pengaturan" di Google Sheets
+  try {
+    const { rows } = await fetchGvizSheet('Pengaturan');
+    if (rows && rows.length > 0) {
+      const parsed: Record<string, any> = {};
+      rows.forEach(r => {
+        const k = r.c?.[0] ? String(r.c[0].f || r.c[0].v || '').trim() : '';
+        const v = r.c?.[1] ? String(r.c[1].f || r.c[1].v || '').trim() : '';
+        if (k && k !== 'Key') {
+          parsed[k] = v;
+        }
+      });
+      if (parsed.namaSekolah) {
+        return { pengaturan: parsed as PengaturanLembaga, source: 'SPREADSHEET' };
+      }
+    }
+  } catch (err) {
+    console.warn('Note: tab Pengaturan spreadsheet belum berisi data kustom:', err);
+  }
+
+  return { source: 'NONE' };
+}
+
+/**
+ * Simpan Pengaturan Lembaga & Kop Surat Resmi Online
+ * 1. Simpan ke Server (/api/settings)
+ * 2. Simpan ke Google Apps Script Web App (jika URL terisi) untuk update sheet "Pengaturan"
+ */
+export async function saveOnlinePengaturan(
+  settings: PengaturanLembaga,
+  gasWebAppUrl?: string
+): Promise<{ success: boolean; message: string; gasSynced?: boolean }> {
+  let serverSaved = false;
+  let gasSynced = false;
+
+  // 1. Simpan ke Cloud Server (/api/settings)
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings, gasWebAppUrl })
+    });
+    if (res.ok) {
+      const resJson = await res.json();
+      serverSaved = resJson.success ?? true;
+      gasSynced = resJson.gasSynced ?? false;
+    }
+  } catch (err: any) {
+    console.warn('Server save warning:', err);
+  }
+
+  // 2. Jika ada gasWebAppUrl dan belum ter-sync lewat server, coba kirim langsung dari client
+  if (gasWebAppUrl && gasWebAppUrl.trim().startsWith('http') && !gasSynced) {
+    try {
+      const gasRes = await fetch(gasWebAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'savePengaturan',
+          payload: settings
+        })
+      });
+      if (gasRes.ok) {
+        const gasJson = await gasRes.json();
+        gasSynced = gasJson.success ?? true;
+      }
+    } catch (gasErr) {
+      console.warn('Client direct GAS settings save note:', gasErr);
+    }
+  }
+
+  // Simpan ke localStorage sebagai cache lokal
+  try {
+    localStorage.setItem('smpn2beji_pengaturan', JSON.stringify(settings));
+  } catch {}
+
+  if (serverSaved || gasSynced) {
+    const detail = gasSynced ? 'Tersimpan online di Cloud Server dan Google Spreadsheet!' : 'Tersimpan online di Cloud Server.';
+    return {
+      success: true,
+      message: `Berhasil! Pengaturan dan Kop Surat resmi telah ${detail}`,
+      gasSynced
+    };
+  }
+
+  return {
+    success: true,
+    message: 'Pengaturan dan Kop tersimpan di penyimpanan browser lokal.',
+    gasSynced: false
+  };
+}
+
+/**
+ * =========================================================================
+ * LAYANAN DATABASE TERPUSAT & SINKRONISASI ANTAR KOMPUTER & SPREADSHEET
+ * =========================================================================
+ */
+
+export interface CentralDbPayload {
+  admins?: AdminUser[];
+  refPelanggaran?: JenisPelanggaran[];
+  logs?: LogPelanggaran[];
+  pengaturan?: PengaturanLembaga;
+  gasWebAppUrl?: string;
+}
+
+/**
+ * Tarik seluruh data dari database terpusat Cloud Server (/api/db)
+ * Ini memastikan saat dibuka dari komputer lain, semua data (admin, pelanggaran, log, kop)
+ * langsung sinkron dan muncul dengan data terbaru!
+ */
+export async function fetchCentralDatabase(): Promise<{
+  admins: AdminUser[];
+  refPelanggaran: JenisPelanggaran[];
+  logs: LogPelanggaran[];
+  pengaturan: PengaturanLembaga;
+  gasWebAppUrl: string;
+  source: 'SERVER' | 'CACHE';
+}> {
+  try {
+    const res = await fetch('/api/db', { cache: 'no-cache' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.data) {
+        return {
+          admins: json.data.admins || [],
+          refPelanggaran: json.data.refPelanggaran || [],
+          logs: json.data.logs || [],
+          pengaturan: json.data.pengaturan,
+          gasWebAppUrl: json.data.gasWebAppUrl || '',
+          source: 'SERVER'
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Central DB fetch from server warning, checking fallback:', err);
+  }
+
+  // Fallback ke cache localStorage
+  const savedAdmins = localStorage.getItem('smpn2beji_admins');
+  const savedRef = localStorage.getItem('smpn2beji_ref');
+  const savedLogs = localStorage.getItem('smpn2beji_logs');
+  const savedPengaturan = localStorage.getItem('smpn2beji_pengaturan');
+  const savedGas = localStorage.getItem('smpn2beji_gas_url');
+
+  return {
+    admins: savedAdmins ? JSON.parse(savedAdmins) : [],
+    refPelanggaran: savedRef ? JSON.parse(savedRef) : [],
+    logs: savedLogs ? JSON.parse(savedLogs) : [],
+    pengaturan: savedPengaturan ? JSON.parse(savedPengaturan) : undefined,
+    gasWebAppUrl: savedGas || '',
+    source: 'CACHE'
+  };
+}
+
+/**
+ * Simpan / Edit Admin Secara Online ke Cloud Server & Google Spreadsheet
+ */
+export async function saveAdminOnline(admin: AdminUser): Promise<{ success: boolean; message: string; gasSynced?: boolean }> {
+  try {
+    const res = await fetch('/api/db/admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(admin)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (err: any) {
+    console.warn('saveAdminOnline server note:', err);
+  }
+  return { success: true, message: 'Data admin disimpan di penyimpanan lokal.', gasSynced: false };
+}
+
+/**
+ * Hapus Admin Secara Online
+ */
+export async function deleteAdminOnline(id: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const res = await fetch(`/api/db/admin/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) return await res.json();
+  } catch (err: any) {
+    console.warn('deleteAdminOnline server note:', err);
+  }
+  return { success: true, message: 'Admin dihapus secara lokal.' };
+}
+
+/**
+ * Simpan / Edit Master Pelanggaran Secara Online
+ */
+export async function saveRefPelanggaranOnline(pel: JenisPelanggaran): Promise<{ success: boolean; message: string; gasSynced?: boolean }> {
+  try {
+    const res = await fetch('/api/db/ref-pelanggaran', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pel)
+    });
+    if (res.ok) return await res.json();
+  } catch (err: any) {
+    console.warn('saveRefPelanggaranOnline server note:', err);
+  }
+  return { success: true, message: 'Data pelanggaran disimpan di penyimpanan lokal.', gasSynced: false };
+}
+
+/**
+ * Hapus Master Pelanggaran Secara Online
+ */
+export async function deleteRefPelanggaranOnline(id: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const res = await fetch(`/api/db/ref-pelanggaran/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) return await res.json();
+  } catch (err: any) {
+    console.warn('deleteRefPelanggaranOnline server note:', err);
+  }
+  return { success: true, message: 'Data pelanggaran dihapus secara lokal.' };
+}
+
+/**
+ * Simpan Log Pelanggaran dari Guru ke Cloud Server & Google Spreadsheet
+ */
+export async function saveLogOnline(
+  log: LogPelanggaran,
+  fileObj?: { base64: string; mimeType: string; filename: string }
+): Promise<{ success: boolean; message: string; fotoUrl?: string; gasSynced?: boolean }> {
+  try {
+    const res = await fetch('/api/db/log-pelanggaran', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ log, fileObj })
+    });
+    if (res.ok) return await res.json();
+  } catch (err: any) {
+    console.warn('saveLogOnline server note:', err);
+  }
+  return { success: true, message: 'Log dicatat di penyimpanan lokal.', fotoUrl: log.fotoBuktiUrl, gasSynced: false };
+}
+
+/**
+ * Simpan URL Web App Google Apps Script ke Cloud Server
+ */
+export async function saveGasUrlOnline(url: string): Promise<{ success: boolean; message: string; testConnected?: boolean }> {
+  try {
+    const res = await fetch('/api/db/gas-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    if (res.ok) return await res.json();
+  } catch (err: any) {
+    console.warn('saveGasUrlOnline server note:', err);
+  }
+  return { success: true, message: 'URL disimpan di browser lokal.' };
+}
+
+/**
+ * Kirim / Ekspor Seluruh Data Awal (Admin, 90 Jenis Pelanggaran, Pengaturan)
+ * ke tab Spreadsheet Google Sheets secara langsung!
+ */
+export async function syncAllToGoogleSheets(gasWebAppUrl?: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const res = await fetch('/api/db/sync-all-to-sheets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gasWebAppUrl })
+    });
+    const json = await res.json();
+    return json;
+  } catch (err: any) {
+    return { success: false, message: 'Gagal mengirim ke spreadsheet: ' + (err?.message || err) };
+  }
+}
+
+

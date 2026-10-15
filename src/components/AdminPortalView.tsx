@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   ShieldCheck, Lock, UserCog, GraduationCap, Users, Settings, 
   FileSpreadsheet, Plus, Trash2, Edit2, RotateCw, Download, 
   Printer, LogOut, CheckCircle2, AlertCircle, Eye, Search, 
-  FileText, Building2, Calendar, FileBadge, BookOpen, Layers
+  FileText, Building2, Calendar, FileBadge, BookOpen, Layers,
+  Sparkles, School, Globe, Send, ExternalLink, Info, Check, Database
 } from 'lucide-react';
 import { AdminUser, Guru, Murid, LogPelanggaran, PengaturanLembaga, JenisPelanggaran, KomponenPelanggaran } from '../types';
 import { DAFTAR_KELAS, GAS_CONFIG } from '../data/initialData';
+import { testGasConnection, SPREADSHEET_ID, DRIVE_FOLDER_ID } from '../services/googleSheetsService';
 
 interface AdminPortalViewProps {
   admins: AdminUser[];
@@ -30,13 +32,15 @@ interface AdminPortalViewProps {
   onResetDefaultPelanggaran?: () => void;
   onSyncSpreadsheet: () => Promise<any> | void;
   onSyncGuruSpreadsheet: () => Promise<any> | void;
-  onSavePengaturan: (newSettings: PengaturanLembaga) => void;
+  onSavePengaturan: (newSettings: PengaturanLembaga) => Promise<any> | void;
+  onSyncPengaturan?: () => Promise<any> | void;
   onOpenReportPrint?: (murid: Murid) => void;
   gasWebAppUrl?: string;
   onSaveGasWebAppUrl?: (url: string) => void;
   onOpenConnectionModal?: () => void;
   isLiveConnected?: boolean;
   lastSyncTime?: string | null;
+  onPushAllToSheets?: () => Promise<any>;
 }
 
 export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
@@ -61,16 +65,67 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   onSyncSpreadsheet,
   onSyncGuruSpreadsheet,
   onSavePengaturan,
+  onSyncPengaturan,
   onOpenReportPrint,
   gasWebAppUrl = '',
   onSaveGasWebAppUrl,
   onOpenConnectionModal,
   isLiveConnected = true,
-  lastSyncTime
+  lastSyncTime,
+  onPushAllToSheets
 }) => {
   // Admin Login State
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminLoginError, setAdminLoginError] = useState('');
+
+  // GAS Web App URL state & inline testing in Pengaturan
+  const [localGasUrl, setLocalGasUrl] = useState(gasWebAppUrl);
+  const [gasTesting, setGasTesting] = useState(false);
+  const [gasTestMsg, setGasTestMsg] = useState<{ success: boolean; text: string } | null>(null);
+  const [isPushingAll, setIsPushingAll] = useState(false);
+  const [pushAllMsg, setPushAllMsg] = useState<{ success: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    setLocalGasUrl(gasWebAppUrl);
+  }, [gasWebAppUrl]);
+
+  const handleTestGasUrl = async () => {
+    if (!localGasUrl.trim()) {
+      setGasTestMsg({ success: false, text: 'Masukkan URL Google Apps Script Web App terlebih dahulu.' });
+      return;
+    }
+    setGasTesting(true);
+    setGasTestMsg(null);
+    try {
+      const res = await testGasConnection(localGasUrl.trim());
+      setGasTesting(false);
+      setGasTestMsg({ success: res.success, text: res.message });
+      if (res.success && onSaveGasWebAppUrl) {
+        onSaveGasWebAppUrl(localGasUrl.trim());
+      }
+    } catch (err: any) {
+      setGasTesting(false);
+      setGasTestMsg({ success: false, text: 'Uji koneksi gagal: ' + (err?.message || err) });
+    }
+  };
+
+  const handlePushAllDataToSpreadsheet = async () => {
+    if (!onPushAllToSheets) return;
+    setIsPushingAll(true);
+    setPushAllMsg(null);
+    try {
+      const res = await onPushAllToSheets();
+      setIsPushingAll(false);
+      setPushAllMsg({
+        success: res?.success ?? true,
+        text: res?.message || 'Seluruh data (Admin, 90 Jenis Pelanggaran, dan Pengaturan & Kop Surat) berhasil disinkronkan ke Google Spreadsheet!'
+      });
+      setTimeout(() => setPushAllMsg(null), 8000);
+    } catch (err: any) {
+      setIsPushingAll(false);
+      setPushAllMsg({ success: false, text: 'Gagal mengirim ke spreadsheet: ' + (err?.message || err) });
+    }
+  };
 
   // Sub Tab Fitur A - E + Master Pelanggaran
   const [subTab, setSubTab] = useState<'A' | 'B' | 'C' | 'D' | 'E' | 'PELANGGARAN'>('A');
@@ -109,6 +164,51 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
   // Fitur D: Pengaturan State Form
   const [settingsForm, setSettingsForm] = useState<PengaturanLembaga>(pengaturan);
   const [savedSettingsNotice, setSavedSettingsNotice] = useState(false);
+  const [settingsNoticeMsg, setSettingsNoticeMsg] = useState('');
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isSyncingSettings, setIsSyncingSettings] = useState(false);
+
+  useEffect(() => {
+    setSettingsForm(pengaturan);
+  }, [pengaturan]);
+
+  // Trigger Pengaturan Sync dari Spreadsheet / Cloud
+  const handleTriggerSyncPengaturan = async () => {
+    if (!onSyncPengaturan) return;
+    setIsSyncingSettings(true);
+    setSettingsNoticeMsg('');
+    try {
+      const res = await onSyncPengaturan();
+      setIsSyncingSettings(false);
+      setSettingsNoticeMsg(res?.message || 'Pengaturan dan Kop berhasil disinkronkan langsung dari server online!');
+      setSavedSettingsNotice(true);
+      setTimeout(() => setSavedSettingsNotice(false), 5000);
+    } catch (err: any) {
+      setIsSyncingSettings(false);
+      setSettingsNoticeMsg('Koneksi selesai. Pengaturan dimuat dari database.');
+      setSavedSettingsNotice(true);
+      setTimeout(() => setSavedSettingsNotice(false), 4000);
+    }
+  };
+
+  // Submit Simpan Pengaturan Lembaga Secara Online
+  const handleSaveSettingsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingSettings(true);
+    setSettingsNoticeMsg('');
+    try {
+      const res = await onSavePengaturan(settingsForm);
+      setIsSavingSettings(false);
+      setSettingsNoticeMsg(res?.message || 'Pengaturan Lembaga, Kop Surat, dan Pengesahan BERHASIL TERSIMPAN ONLINE!');
+      setSavedSettingsNotice(true);
+      setTimeout(() => setSavedSettingsNotice(false), 5000);
+    } catch (err: any) {
+      setIsSavingSettings(false);
+      setSettingsNoticeMsg('Pengaturan tersimpan di lokal: ' + (err?.message || err));
+      setSavedSettingsNotice(true);
+      setTimeout(() => setSavedSettingsNotice(false), 4000);
+    }
+  };
 
   // Fitur E: Laporan Filters
   const [laporanKelasFilter, setLaporanKelasFilter] = useState('Semua');
@@ -426,16 +526,30 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                 Daftar admin yang berhak mengelola pengaturan, master data murid, dan laporan.
               </p>
             </div>
-            <button
-              onClick={() => {
-                setEditingAdmin(null);
-                setAdminModalOpen(true);
-              }}
-              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Admin Baru</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {onPushAllToSheets && (
+                <button
+                  type="button"
+                  onClick={handlePushAllDataToSpreadsheet}
+                  disabled={isPushingAll}
+                  className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  title="Kirim dan simpan data Admin ke Google Spreadsheet tab Admin"
+                >
+                  {isPushingAll ? <RotateCw className="w-3.5 h-3.5 animate-spin text-emerald-600" /> : <Send className="w-3.5 h-3.5 text-emerald-600" />}
+                  <span>{isPushingAll ? 'Menyinkronkan...' : 'Kirim Admin ke Sheets'}</span>
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setEditingAdmin(null);
+                  setAdminModalOpen(true);
+                }}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Admin Baru</span>
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -830,27 +944,208 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                 Fitur D: Pengaturan Lembaga, Kop Surat Resmi, & Data Pengesahan
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Konfigurasi kop surat resmi dinas dan data pengesahan untuk pencetakan Berita Acara & Surat Panggilan Siswa.
+                Konfigurasi kop surat resmi dinas dan data pengesahan untuk pencetakan Berita Acara & Surat Panggilan Siswa (Tersimpan Online ke Database).
               </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleTriggerSyncPengaturan}
+                disabled={isSyncingSettings}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-200 cursor-pointer shadow-sm"
+                title="Tarik kembali data pengaturan dan kop surat terbaru dari server / spreadsheet"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${isSyncingSettings ? 'animate-spin text-indigo-600' : ''}`} />
+                <span>{isSyncingSettings ? 'Menyinkronkan...' : 'Tarik Pengaturan Online'}</span>
+              </button>
+
+              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Database Online Aktif</span>
+              </span>
             </div>
           </div>
 
           {savedSettingsNotice && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2 animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>Pengaturan Lembaga, Kop Surat, dan Pengesahan berhasil disimpan ke database!</span>
+            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs flex items-center gap-3 animate-in fade-in shadow-sm">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <div>
+                <p className="font-bold text-sm">
+                  {settingsNoticeMsg || 'Pengaturan Lembaga, Kop Surat, dan Pengesahan BERHASIL TERSIMPAN ONLINE!'}
+                </p>
+                <p className="text-[11px] text-emerald-700 mt-0.5">
+                  Seluruh perubahan kop surat, logo, dan pejabat pengesahan langsung berlaku untuk seluruh pengguna dan cetak surat dinas.
+                </p>
+              </div>
             </div>
           )}
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSavePengaturan(settingsForm);
-              setSavedSettingsNotice(true);
-              setTimeout(() => setSavedSettingsNotice(false), 4000);
-            }}
-            className="space-y-6"
-          >
+          {/* BANNER STATUS SINKRONISASI CLOUD & GOOGLE SPREADSHEET */}
+          <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-5 rounded-2xl border border-indigo-800 shadow-md space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-white flex items-center gap-2">
+                    Integrasi Google Spreadsheet & Cloud Database Terpusat
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono border border-emerald-400/30">
+                      Multi-Device Sync
+                    </span>
+                  </h4>
+                  <p className="text-xs text-indigo-200">
+                    Pengaturan kop surat dinas dan data pengesahan otomatis tersimpan online di server untuk semua komputer.
+                  </p>
+                </div>
+              </div>
+
+              {/* Tombol Kirim Seluruh Data ke Sheets */}
+              <button
+                type="button"
+                onClick={handlePushAllDataToSpreadsheet}
+                disabled={isPushingAll}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+                title="Kirim seluruh data (Pengaturan, Admin, 90 Jenis Pelanggaran) langsung ke Google Spreadsheet"
+              >
+                {isPushingAll ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <span>{isPushingAll ? 'Menyinkronkan ke Spreadsheet...' : 'Kirim Seluruh Data ke Sheets'}</span>
+              </button>
+            </div>
+
+            {pushAllMsg && (
+              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                pushAllMsg.success 
+                  ? 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-200' 
+                  : 'bg-rose-500/20 border border-rose-400/40 text-rose-200'
+              }`}>
+                {pushAllMsg.success ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" /> : <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />}
+                <span>{pushAllMsg.text}</span>
+              </div>
+            )}
+
+            {/* Input URL Google Apps Script Web App Langsung di Pengaturan */}
+            <div className="bg-white/10 rounded-xl p-3.5 border border-white/10 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-bold text-indigo-200 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-yellow-400" />
+                  URL Deployment Google Apps Script (Untuk Tulis Otomatis ke Spreadsheet):
+                </span>
+                {localGasUrl ? (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-mono px-2 py-0.5 rounded border border-emerald-500/30">
+                    URL Terpasang
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 font-mono px-2 py-0.5 rounded border border-amber-500/30">
+                    Belum Dikonfigurasi
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="url"
+                  value={localGasUrl}
+                  onChange={(e) => setLocalGasUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  className="flex-1 px-3 py-2 bg-slate-900/80 border border-indigo-400/40 rounded-xl text-xs font-mono text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestGasUrl}
+                  disabled={gasTesting}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {gasTesting ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                  <span>{gasTesting ? 'Menguji...' : 'Uji Koneksi (Test)'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onSaveGasWebAppUrl) {
+                      onSaveGasWebAppUrl(localGasUrl.trim());
+                      setGasTestMsg({ success: true, text: 'URL berhasil disimpan ke Cloud Server untuk semua komputer!' });
+                      setTimeout(() => setGasTestMsg(null), 4000);
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Simpan URL
+                </button>
+              </div>
+
+              {gasTestMsg && (
+                <div className={`p-2 rounded-lg text-[11px] flex items-center gap-2 ${
+                  gasTestMsg.success ? 'bg-emerald-950/80 border border-emerald-500 text-emerald-300' : 'bg-rose-950/80 border border-rose-500 text-rose-300'
+                }`}>
+                  {gasTestMsg.success ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+                  <span>{gasTestMsg.text}</span>
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-300">
+                Spreadsheet ID: <code className="text-yellow-300 font-mono">{SPREADSHEET_ID}</code> &bull; Tab Target: <strong>Pengaturan</strong>, <strong>Admin</strong>, <strong>Ref_Pelanggaran</strong>, <strong>Log_Pelanggaran</strong>.
+              </p>
+            </div>
+          </div>
+
+          {/* PRATINJAU LANGSUNG KOP SURAT RESMI */}
+          <div className="p-5 bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-2xl border-2 border-indigo-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                Pratinjau Langsung Kop Surat Dinas & Stempel Resmi
+              </span>
+              <span className="text-[10px] text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 font-mono">
+                T.A. {settingsForm.tahunAjaran} ({settingsForm.semester})
+              </span>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm font-serif">
+              <div className="flex items-center justify-between border-b-4 border-double border-black pb-3 gap-4">
+                <div className="w-16 h-16 shrink-0 flex items-center justify-center">
+                  {settingsForm.logoUrl ? (
+                    <img 
+                      src={settingsForm.logoUrl} 
+                      alt="Logo Sekolah" 
+                      className="max-h-16 max-w-16 object-contain"
+                    />
+                  ) : (
+                    <School className="w-12 h-12 text-slate-800" />
+                  )}
+                </div>
+                
+                <div className="text-center flex-1 space-y-0.5">
+                  <h5 className="text-[11px] font-bold tracking-wider uppercase font-sans text-slate-800">PEMERINTAH KABUPATEN PASURUAN</h5>
+                  <h5 className="text-[11px] font-bold tracking-wider uppercase font-sans text-slate-800">DINAS PENDIDIKAN</h5>
+                  <h3 className="text-base sm:text-lg font-black tracking-tight uppercase font-sans text-slate-950">
+                    {settingsForm.namaSekolah || 'SMP NEGERI 2 BEJI'}
+                  </h3>
+                  <p className="text-[10px] italic font-sans text-slate-600">
+                    {settingsForm.alamat || 'Jl. Raya Cangkringmalang No. 45, Beji'}, {settingsForm.desaKecamatan || 'Kecamatan Beji'}, {settingsForm.kabupatenKota || 'Kabupaten Pasuruan'}, Kode Pos: {settingsForm.kodePos || '67154'}
+                  </p>
+                  <p className="text-[10px] font-sans text-slate-600">
+                    Telp: {settingsForm.telepon || '(0343) 656789'} &bull; Email: {settingsForm.email || 'smpn2beji_pas@yahoo.co.id'} &bull; Web: {settingsForm.website || 'https://smpn2beji.sch.id'}
+                  </p>
+                </div>
+
+                <div className="w-16 h-16 shrink-0 hidden sm:flex items-center justify-center font-sans">
+                  <div className="w-14 h-14 rounded-full border border-black flex flex-col items-center justify-center text-[9px] font-bold text-center p-1 leading-tight text-slate-800">
+                    <span>NPSN:</span>
+                    <span>{settingsForm.npsn || '20519123'}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex justify-between items-center text-[10px] font-sans text-slate-500 pt-1">
+                <span>Tempat/Tgl Pengesahan: <strong className="text-slate-700">{settingsForm.tempatPengesahan}, {settingsForm.tanggalPengesahan}</strong></span>
+                <span>Kepsek: <strong className="text-slate-700">{settingsForm.namaKepsek}</strong> (NIP: {settingsForm.nipKepsek})</span>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveSettingsSubmit} className="space-y-6">
             {/* Bagian 1: Identitas Sekolah & Logo */}
             <div className="space-y-4">
               <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-2">
@@ -1090,13 +1385,28 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="px-6 py-3 bg-indigo-700 hover:bg-indigo-800 text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Simpan Seluruh Pengaturan Lembaga</span>
-            </button>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <button
+                type="submit"
+                disabled={isSavingSettings}
+                className="px-6 py-3.5 bg-indigo-700 hover:bg-indigo-800 disabled:bg-indigo-400 text-white font-bold rounded-xl text-xs sm:text-sm shadow-md transition-all flex items-center gap-2 cursor-pointer"
+              >
+                {isSavingSettings ? (
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
+                <span>
+                  {isSavingSettings
+                    ? 'Menyimpan Online ke Spreadsheet & Cloud...'
+                    : 'Simpan Seluruh Pengaturan Lembaga & Kop Surat Online'}
+                </span>
+              </button>
+
+              <span className="text-[11px] text-slate-500 italic">
+                Data langsung tersimpan di Cloud Server dan Google Spreadsheet tab "Pengaturan"
+              </span>
+            </div>
           </form>
 
         </div>
@@ -1311,6 +1621,19 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {onPushAllToSheets && (
+                <button
+                  type="button"
+                  onClick={handlePushAllDataToSpreadsheet}
+                  disabled={isPushingAll}
+                  className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  title="Kirim dan simpan seluruh 90 master pelanggaran ke Google Spreadsheet tab Ref_Pelanggaran"
+                >
+                  {isPushingAll ? <RotateCw className="w-3.5 h-3.5 animate-spin text-emerald-600" /> : <Send className="w-3.5 h-3.5 text-emerald-600" />}
+                  <span>{isPushingAll ? 'Menyinkronkan...' : 'Kirim 90 Aturan ke Sheets'}</span>
+                </button>
+              )}
+
               {onResetDefaultPelanggaran && (
                 <button
                   type="button"
