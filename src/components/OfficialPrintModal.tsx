@@ -195,14 +195,14 @@ export const OfficialPrintModal: React.FC<OfficialPrintModalProps> = ({
                   </tr>
                 ) : (
                   studentLogs.map((l, i) => (
-                    <tr key={l.id || i}>
+                    <tr key={`${l.id || 'log'}_${i}`}>
                       <td className="border border-slate-400 p-1.5 text-center">{i + 1}</td>
                       <td className="border border-slate-400 p-1.5 whitespace-nowrap">
                         {l.hari}, {l.tanggal}
                       </td>
                       <td className="border border-slate-400 p-1.5">
                         {l.pelanggaranList.map((p, idx) => (
-                          <div key={idx} className="font-medium">
+                          <div key={`${p.id || p.kode || 'p'}_${idx}`} className="font-medium">
                             <span className="font-bold font-mono text-[10px] bg-slate-100 px-1 rounded mr-1">
                               [{p.kode}]
                             </span>

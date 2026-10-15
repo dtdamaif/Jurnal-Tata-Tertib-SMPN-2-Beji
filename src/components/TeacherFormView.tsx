@@ -491,8 +491,8 @@ export const TeacherFormView: React.FC<TeacherFormViewProps> = ({
                   <option value="">
                     {!kelas ? '-- Silakan Pilih Kelas Terlebih Dahulu --' : `-- Pilih Nama Murid (${muridByKelas.length} terdaftar) --`}
                   </option>
-                  {muridByKelas.map(m => (
-                    <option key={m.nisn} value={m.nisn}>
+                  {muridByKelas.map((m, mIdx) => (
+                    <option key={`${m.id || m.nisn || 'murid'}_${mIdx}`} value={m.nisn}>
                       {m.nama} (NISN: {m.nisn} - {m.jenisKelamin === 'L' ? 'Laki-laki' : 'Perempuan'})
                     </option>
                   ))}
@@ -633,11 +633,11 @@ export const TeacherFormView: React.FC<TeacherFormViewProps> = ({
                   Tidak ada jenis pelanggaran yang cocok dengan pencarian / filter.
                 </div>
               ) : (
-                filteredRefPelanggaran.map(pel => {
+                filteredRefPelanggaran.map((pel, pelIdx) => {
                   const isChecked = selectedPelanggaranIds.includes(pel.id);
                   return (
                     <label
-                      key={pel.id}
+                      key={`${pel.id || pel.kode || 'pel'}_${pelIdx}`}
                       className={`flex items-start gap-3 p-2.5 rounded-xl cursor-pointer transition-colors ${
                         isChecked ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50'
                       }`}

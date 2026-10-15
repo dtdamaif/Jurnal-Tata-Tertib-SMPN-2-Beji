@@ -367,12 +367,14 @@ export const INITIAL_PENGATURAN: PengaturanLembaga = {
   nipKepsek: '196704151992032006',
   namaPelapor: 'Bagus Pratama, S.Pd.',
   nipPelapor: '199201012019031005',
-  jabatanPelapor: 'Koordinator Ketertiban & BK'
+  jabatanPelapor: 'Koordinator Ketertiban & BK',
+  gasWebAppUrl: 'https://script.google.com/macros/s/AKfycbx4fpy1xSBJuh8HSot5OchwAuV-sTAPvtLOiQOT7AZL-sOPd-CQ4Tzp853BBSkQ0mE/exec'
 };
 
 export const GAS_CONFIG = {
   spreadsheetId: '1vzxldrnNQEDkZBQfPiA7WH8K3e9eF6NlqdMmgy4nj10',
   driveFolderId: '18tDeAMgEFfYR5vkYJT-yiZiAJ7g4XOdH',
   adminDefaultPassword: '@smpn2beji',
-  guruDefaultPassword: 'Smpn2Beji'
+  guruDefaultPassword: 'Smpn2Beji',
+  webAppUrl: 'https://script.google.com/macros/s/AKfycbx4fpy1xSBJuh8HSot5OchwAuV-sTAPvtLOiQOT7AZL-sOPd-CQ4Tzp853BBSkQ0mE/exec'
 };

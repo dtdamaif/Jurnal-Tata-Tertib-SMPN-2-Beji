@@ -76,7 +76,7 @@ export default function App() {
 
   // Google Apps Script Web App Deployment URL
   const [gasWebAppUrl, setGasWebAppUrl] = useState<string>(() => {
-    return localStorage.getItem('smpn2beji_gas_url') || '';
+    return localStorage.getItem('smpn2beji_gas_url') || GAS_CONFIG.webAppUrl || '';
   });
 
   // Real-time Connection State
@@ -118,11 +118,12 @@ export default function App() {
             if (centralDb.logs && centralDb.logs.length > 0) {
               setLogs(centralDb.logs);
             }
-            if (centralDb.pengaturan && centralDb.pengaturan.namaSekolah) {
+            if (centralDb.pengaturan && (centralDb.pengaturan.namaSekolah || centralDb.pengaturan.npsn)) {
               setPengaturan(centralDb.pengaturan);
             }
             if (centralDb.gasWebAppUrl) {
               setGasWebAppUrl(centralDb.gasWebAppUrl);
+              localStorage.setItem('smpn2beji_gas_url', centralDb.gasWebAppUrl);
             }
           }
         } catch (dbErr) {
@@ -173,9 +174,15 @@ export default function App() {
 
         // 6. Fetch live pengaturan lembaga & kop surat dari server / spreadsheet
         try {
-          const { pengaturan: liveSettings } = await fetchLivePengaturan();
-          if (isMounted && liveSettings && liveSettings.namaSekolah) {
-            setPengaturan(prev => ({ ...prev, ...liveSettings }));
+          const { pengaturan: liveSettings, gasWebAppUrl: liveGasUrl } = await fetchLivePengaturan();
+          if (isMounted) {
+            if (liveSettings && (liveSettings.namaSekolah || liveSettings.npsn)) {
+              setPengaturan(prev => ({ ...prev, ...liveSettings }));
+            }
+            if (liveGasUrl) {
+              setGasWebAppUrl(liveGasUrl);
+              localStorage.setItem('smpn2beji_gas_url', liveGasUrl);
+            }
           }
         } catch (e) {
           console.warn('Note on loading online settings:', e);
@@ -428,9 +435,15 @@ export default function App() {
   };
 
   // Fitur D: Pengaturan Lembaga & Kop Surat Online
-  const handleSavePengaturan = async (newSettings: PengaturanLembaga) => {
-    setPengaturan(newSettings);
-    const result = await saveOnlinePengaturan(newSettings, gasWebAppUrl);
+  const handleSavePengaturan = async (newSettings: PengaturanLembaga, newGasUrl?: string) => {
+    const targetGasUrl = (newGasUrl || newSettings.gasWebAppUrl || gasWebAppUrl || '').trim();
+    if (targetGasUrl) {
+      setGasWebAppUrl(targetGasUrl);
+      localStorage.setItem('smpn2beji_gas_url', targetGasUrl);
+    }
+    const updatedSettings = { ...newSettings, gasWebAppUrl: targetGasUrl };
+    setPengaturan(updatedSettings);
+    const result = await saveOnlinePengaturan(updatedSettings, targetGasUrl);
     return result;
   };
 
@@ -438,12 +451,15 @@ export default function App() {
   const handleSyncPengaturan = async () => {
     setIsSyncingAll(true);
     try {
-      const { pengaturan: liveSettings } = await fetchLivePengaturan();
-      if (liveSettings && liveSettings.namaSekolah) {
+      const { pengaturan: liveSettings, gasWebAppUrl: liveGasUrl } = await fetchLivePengaturan();
+      if (liveSettings && (liveSettings.namaSekolah || liveSettings.npsn)) {
         setPengaturan(prev => ({ ...prev, ...liveSettings }));
-        return { success: true, count: 1, message: 'Pengaturan lembaga dan kop surat berhasil dimuat online!' };
       }
-      return { success: false, message: 'Belum ada data pengaturan kustom di server/spreadsheet' };
+      if (liveGasUrl) {
+        setGasWebAppUrl(liveGasUrl);
+        localStorage.setItem('smpn2beji_gas_url', liveGasUrl);
+      }
+      return { success: true, count: 1, message: 'Pengaturan lembaga dan URL Web App berhasil dimuat online!' };
     } catch (err: any) {
       console.error('Error syncing pengaturan:', err);
       throw err;

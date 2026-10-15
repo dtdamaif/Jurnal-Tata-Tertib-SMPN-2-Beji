@@ -251,7 +251,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
 
                   return (
                     <tr 
-                      key={item.id} 
+                      key={`${item.id || item.nisn || 'murid'}_${index}`} 
                       className={`hover:bg-slate-50/80 transition-colors ${
                         points >= 61 ? 'bg-rose-50/40' : points >= 41 ? 'bg-orange-50/30' : ''
                       }`}
@@ -452,7 +452,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                   <div className="space-y-3">
                     {selectedMuridDetail.logs.map((log: LogPelanggaran, lIdx: number) => (
                       <div 
-                        key={log.id || lIdx} 
+                        key={`${log.id || 'log'}_${lIdx}`} 
                         className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-blue-300 transition-colors shadow-xs space-y-2.5"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
@@ -474,7 +474,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
                         <div>
                           <ul className="space-y-1">
                             {log.pelanggaranList.map((p, pIdx: number) => (
-                              <li key={pIdx} className="text-xs text-slate-800 flex items-start gap-2 bg-slate-50 p-2 rounded-lg">
+                              <li key={`${p.id || p.kode || 'p'}_${pIdx}`} className="text-xs text-slate-800 flex items-start gap-2 bg-slate-50 p-2 rounded-lg">
                                 <span className="font-mono text-[10px] font-black text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-200">
                                   {p.kode}
                                 </span>

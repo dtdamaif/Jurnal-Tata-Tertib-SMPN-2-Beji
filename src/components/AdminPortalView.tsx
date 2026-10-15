@@ -5,11 +5,13 @@ import {
   FileSpreadsheet, Plus, Trash2, Edit2, RotateCw, Download, 
   Printer, LogOut, CheckCircle2, AlertCircle, Eye, Search, 
   FileText, Building2, Calendar, FileBadge, BookOpen, Layers,
-  Sparkles, School, Globe, Send, ExternalLink, Info, Check, Database
+  Sparkles, School, Globe, Send, ExternalLink, Info, Check, Database,
+  FileCheck
 } from 'lucide-react';
-import { AdminUser, Guru, Murid, LogPelanggaran, PengaturanLembaga, JenisPelanggaran, KomponenPelanggaran } from '../types';
+import { AdminUser, Guru, Murid, LogPelanggaran, PengaturanLembaga, JenisPelanggaran, KomponenPelanggaran, getSanksiByPoin } from '../types';
 import { DAFTAR_KELAS, GAS_CONFIG } from '../data/initialData';
 import { testGasConnection, SPREADSHEET_ID, DRIVE_FOLDER_ID } from '../services/googleSheetsService';
+import { RekapPrintModal, RekapItem } from './RekapPrintModal';
 
 interface AdminPortalViewProps {
   admins: AdminUser[];
@@ -32,7 +34,7 @@ interface AdminPortalViewProps {
   onResetDefaultPelanggaran?: () => void;
   onSyncSpreadsheet: () => Promise<any> | void;
   onSyncGuruSpreadsheet: () => Promise<any> | void;
-  onSavePengaturan: (newSettings: PengaturanLembaga) => Promise<any> | void;
+  onSavePengaturan: (newSettings: PengaturanLembaga, newGasUrl?: string) => Promise<any> | void;
   onSyncPengaturan?: () => Promise<any> | void;
   onOpenReportPrint?: (murid: Murid) => void;
   gasWebAppUrl?: string;
@@ -197,9 +199,13 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     setIsSavingSettings(true);
     setSettingsNoticeMsg('');
     try {
-      const res = await onSavePengaturan(settingsForm);
+      const activeUrl = localGasUrl.trim();
+      const res = await onSavePengaturan({ ...settingsForm, gasWebAppUrl: activeUrl }, activeUrl);
+      if (activeUrl && onSaveGasWebAppUrl) {
+        onSaveGasWebAppUrl(activeUrl);
+      }
       setIsSavingSettings(false);
-      setSettingsNoticeMsg(res?.message || 'Pengaturan Lembaga, Kop Surat, dan Pengesahan BERHASIL TERSIMPAN ONLINE!');
+      setSettingsNoticeMsg(res?.message || 'Pengaturan Lembaga, Kop Surat, dan URL Web App BERHASIL TERSIMPAN ONLINE!');
       setSavedSettingsNotice(true);
       setTimeout(() => setSavedSettingsNotice(false), 5000);
     } catch (err: any) {
@@ -210,10 +216,13 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     }
   };
 
-  // Fitur E: Laporan Filters
+  // Fitur E: Laporan Filters & View Modes
+  const [laporanViewMode, setLaporanViewMode] = useState<'REKAP' | 'LOGS'>('REKAP');
   const [laporanKelasFilter, setLaporanKelasFilter] = useState('Semua');
   const [laporanWaliFilter, setLaporanWaliFilter] = useState('Semua');
   const [laporanMuridQuery, setLaporanMuridQuery] = useState('');
+  const [laporanHanyaBerpoin, setLaporanHanyaBerpoin] = useState(true);
+  const [rekapPrintModalOpen, setRekapPrintModalOpen] = useState(false);
 
   // Handle Admin Login
   const handleAdminLoginSubmit = (e: React.FormEvent) => {
@@ -279,7 +288,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     return matchKelas && matchWali && matchQuery;
   });
 
-  // Filtered Logs for Fitur E Laporan
+  // Filtered Logs for Fitur E Laporan (Riwayat Kejadian)
   const filteredLogs = logs.filter(l => {
     const matchKelas = laporanKelasFilter === 'Semua' || l.kelas === laporanKelasFilter;
     
@@ -295,7 +304,86 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     return matchKelas && matchWali && matchQuery;
   });
 
-  // Export to Excel (.xlsx) using SheetJS
+  // Rekapitulasi Siswa Berdasarkan Akumulasi Poin (Per Kelas / Guru Wali)
+  // Menghitung poin tiap siswa, dan memfilter hanya yang memiliki poin (> 0) sesuai instruksi
+  const rekapSiswaData: RekapItem[] = muridList
+    .filter(m => {
+      const matchKelas = laporanKelasFilter === 'Semua' || m.kelas === laporanKelasFilter;
+      const matchWali = laporanWaliFilter === 'Semua' || (m.guruWali === laporanWaliFilter || m.waliKelas === laporanWaliFilter);
+      const q = laporanMuridQuery.toLowerCase().trim();
+      const matchQuery = !q || 
+        m.nama.toLowerCase().includes(q) || 
+        m.nisn.includes(q) || 
+        m.nis.includes(q) ||
+        (m.guruWali && m.guruWali.toLowerCase().includes(q)) ||
+        m.waliKelas.toLowerCase().includes(q);
+      return matchKelas && matchWali && matchQuery;
+    })
+    .map(m => {
+      const studentLogs = logs.filter(l => l.nisn === m.nisn);
+      const totalPoin = studentLogs.reduce((sum, l) => sum + (l.totalPoin || 0), 0);
+      const totalKasus = studentLogs.length;
+      const listPel = studentLogs.flatMap(l => l.pelanggaranList || []);
+      const ringkasanPelanggaran = listPel.map(p => `${p.nama} (+${p.poin})`).join('; ') || '-';
+      const sanksi = getSanksiByPoin(totalPoin);
+      return {
+        murid: m,
+        studentLogs,
+        totalPoin,
+        totalKasus,
+        ringkasanPelanggaran,
+        sanksi
+      };
+    })
+    .filter(item => {
+      if (laporanHanyaBerpoin) {
+        return item.totalPoin > 0;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (b.totalPoin !== a.totalPoin) {
+        return b.totalPoin - a.totalPoin; // Urutkan poin terbesar di atas
+      }
+      return a.murid.nama.localeCompare(b.murid.nama);
+    });
+
+  // Export Rekap Siswa ke Excel (.xlsx)
+  const handleExportRekapExcel = () => {
+    const dataToExport = rekapSiswaData.map((item, index) => {
+      return {
+        'No': index + 1,
+        'NISN': item.murid.nisn,
+        'NIS': item.murid.nis,
+        'Nama Siswa': item.murid.nama,
+        'L/P': item.murid.jenisKelamin,
+        'Kelas': item.murid.kelas,
+        'Wali Kelas': item.murid.waliKelas,
+        'Kelompok Guru Wali': item.murid.guruWali || item.murid.waliKelas,
+        'Frekuensi Pelanggaran': item.totalKasus,
+        'Rincian Pelanggaran': item.ringkasanPelanggaran,
+        'Total Akumulasi Poin': item.totalPoin,
+        'Tingkat Sanksi': `Level ${item.sanksi.level} (${item.sanksi.rentang} Poin)`,
+        'Ketentuan Sanksi & Tindak Lanjut': item.sanksi.sanksi
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Poin Siswa');
+
+    // Auto-fit column width
+    worksheet['!cols'] = [
+      { wch: 5 }, { wch: 14 }, { wch: 10 }, { wch: 28 }, { wch: 6 },
+      { wch: 8 }, { wch: 24 }, { wch: 24 }, { wch: 16 }, { wch: 45 },
+      { wch: 14 }, { wch: 20 }, { wch: 35 }
+    ];
+
+    const cleanFilterKelas = laporanKelasFilter === 'Semua' ? 'Semua_Kelas' : 'Kelas_' + laporanKelasFilter;
+    XLSX.writeFile(workbook, `Rekap_Poin_Pelanggaran_SMPN2Beji_${cleanFilterKelas}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Export Jurnal Log ke Excel (.xlsx) using SheetJS
   const handleExportExcel = () => {
     const dataToExport = filteredLogs.map((l, index) => {
       const studentObj = muridList.find(m => m.nisn === l.nisn);
@@ -330,7 +418,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
       { wch: 10 }, { wch: 30 }, { wch: 30 }, { wch: 22 }, { wch: 20 }, { wch: 20 }
     ];
 
-    XLSX.writeFile(workbook, `Laporan_Pelanggaran_SMPN2Beji_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(workbook, `Jurnal_Pelanggaran_SMPN2Beji_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // IF NOT LOGGED IN: SHOW ADMIN LOGIN FORM
@@ -816,8 +904,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
                 >
                   <option value="Semua">Semua Kelompok Guru Wali</option>
-                  {daftarSemuaGuruWali.map(wali => (
-                    <option key={wali} value={wali}>{wali}</option>
+                  {daftarSemuaGuruWali.map((wali, wIdx) => (
+                    <option key={`${wali}_${wIdx}`} value={wali}>{wali}</option>
                   ))}
                 </select>
               </div>
@@ -877,8 +965,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredMuridList.map(m => (
-                    <tr key={m.id} className="hover:bg-slate-50/70">
+                  filteredMuridList.map((m, mIdx) => (
+                    <tr key={`${m.id || m.nisn || 'murid'}_${mIdx}`} className="hover:bg-slate-50/70">
                       <td className="py-3 px-3 font-mono font-bold text-slate-700">{m.nisn}</td>
                       <td className="py-3 px-3 font-mono text-slate-500">{m.nis}</td>
                       <td className="py-3 px-3 font-bold text-slate-900">{m.nama}</td>
@@ -1062,12 +1150,20 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (onSaveGasWebAppUrl) {
-                      onSaveGasWebAppUrl(localGasUrl.trim());
-                      setGasTestMsg({ success: true, text: 'URL berhasil disimpan ke Cloud Server untuk semua komputer!' });
-                      setTimeout(() => setGasTestMsg(null), 4000);
+                  onClick={async () => {
+                    const cleanUrl = localGasUrl.trim();
+                    if (!cleanUrl) {
+                      setGasTestMsg({ success: false, text: 'Masukkan URL Google Apps Script terlebih dahulu.' });
+                      return;
                     }
+                    if (onSaveGasWebAppUrl) {
+                      onSaveGasWebAppUrl(cleanUrl);
+                    }
+                    if (onSavePengaturan) {
+                      await onSavePengaturan({ ...settingsForm, gasWebAppUrl: cleanUrl }, cleanUrl);
+                    }
+                    setGasTestMsg({ success: true, text: 'URL berhasil disimpan ke Cloud Server & Google Spreadsheet untuk semua komputer!' });
+                    setTimeout(() => setGasTestMsg(null), 5000);
                   }}
                   className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
                 >
@@ -1413,186 +1509,507 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* FITUR E: LAPORAN & DOWNLOAD / EXPORT EXCEL (.XLSX) */}
+      {/* FITUR E: LAPORAN REKAPITULASI & EXPORT EXCEL (.XLSX) */}
       {/* ========================================================= */}
       {subTab === 'E' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
           
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+          {/* Header Fitur E */}
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-5">
             <div>
-              <h3 className="font-black text-slate-900 text-lg flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
-                Fitur E: Laporan Pelanggaran Siswa & Ekspor Data
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Dapat difilter berdasarkan Kelas, Kelompok Guru Wali, atau Per Murid. Terdapat tombol Download Excel (.xlsx) dan Cetak Resmi.
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-slate-900 text-lg flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
+                  Fitur E: Laporan Rekapitulasi & Ekspor Data
+                </h3>
+                <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 text-[11px] font-bold rounded-full">
+                  Format Resmi Dinas
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Laporan rekapitulasi poin pelanggaran siswa per kelas atau per kelompok guru wali. Siap dicetak resmi (PDF/Print) hanya untuk siswa yang memperoleh poin, serta dapat diekspor ke format Excel (.xlsx).
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            {/* Tombol Aksi Utama */}
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={handleExportExcel}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-sm"
+                type="button"
+                onClick={() => setRekapPrintModalOpen(true)}
+                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+                title="Cetak Laporan Rekapitulasi Resmi (Print / Simpan PDF)"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Cetak Rekap Resmi (PDF)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportRekapExcel}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-2 shadow-sm cursor-pointer"
+                title="Download Rekap Siswa ke Excel (.xlsx)"
               >
                 <Download className="w-4 h-4" />
-                <span>Download / Export Excel (.xlsx)</span>
+                <span>Download Rekap Excel</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Download Jurnal Log Kejadian Mentah ke Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-slate-500" />
+                <span>Export Jurnal Log</span>
               </button>
             </div>
           </div>
 
-          {/* Filter Controls (Kelas, Kelompok Wali, Per Murid) */}
-          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3">
-            
-            {/* Filter 1: Berdasarkan Kelas */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Filter Berdasarkan Kelas
-              </label>
-              <select
-                value={laporanKelasFilter}
-                onChange={(e) => setLaporanKelasFilter(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
+          {/* Sub Navigation Modes (Rekapitulasi vs Log Jurnal) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-2 rounded-2xl border border-slate-200">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setLaporanViewMode('REKAP')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  laporanViewMode === 'REKAP'
+                    ? 'bg-white text-indigo-700 shadow-sm border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
               >
-                <option value="Semua">Semua Kelas (7A - 9H)</option>
-                {DAFTAR_KELAS.map(k => (
-                  <option key={k} value={k}>Kelas {k}</option>
-                ))}
-              </select>
-            </div>
+                <FileCheck className="w-4 h-4 text-indigo-600" />
+                <span>Laporan Rekapitulasi Siswa Berpoin</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-indigo-50 text-indigo-700">
+                  {rekapSiswaData.length} Siswa
+                </span>
+              </button>
 
-            {/* Filter 2: Berdasarkan Kelompok Guru Wali */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Filter Kelompok Guru Wali
-              </label>
-              <select
-                value={laporanWaliFilter}
-                onChange={(e) => setLaporanWaliFilter(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
+              <button
+                type="button"
+                onClick={() => setLaporanViewMode('LOGS')}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                  laporanViewMode === 'LOGS'
+                    ? 'bg-white text-indigo-700 shadow-sm border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                }`}
               >
-                <option value="Semua">Semua Kelompok Guru Wali</option>
-                {daftarSemuaGuruWali.map(wali => (
-                  <option key={wali} value={wali}>
-                    {wali}
-                  </option>
-                ))}
-              </select>
+                <Layers className="w-4 h-4 text-slate-500" />
+                <span>Riwayat Jurnal Log Kejadian</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-200 text-slate-700">
+                  {filteredLogs.length} Log
+                </span>
+              </button>
             </div>
 
-            {/* Filter 3: Per Murid */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Filter Per Murid (Nama / NISN)
+            {/* Filter Toggle: Siswa Berpoin Saja vs Semua */}
+            <div className="flex items-center gap-2 px-3 py-1 bg-white rounded-xl border border-slate-200">
+              <input
+                type="checkbox"
+                id="toggleHanyaBerpoin"
+                checked={laporanHanyaBerpoin}
+                onChange={(e) => setLaporanHanyaBerpoin(e.target.checked)}
+                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <label htmlFor="toggleHanyaBerpoin" className="text-xs font-bold text-slate-700 cursor-pointer select-none">
+                Cetak / Tampilkan Siswa Berpoin Saja (&gt; 0 Poin)
               </label>
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={laporanMuridQuery}
-                  onChange={(e) => setLaporanMuridQuery(e.target.value)}
-                  placeholder="Ketik nama atau NISN murid..."
-                  className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:ring-2 focus:ring-indigo-600"
-                />
-              </div>
+              <span className="text-[10px] text-slate-400 italic hidden sm:inline">
+                (Tanpa siswa 0 poin)
+              </span>
             </div>
-
           </div>
 
-          {/* Laporan Table */}
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full text-left text-xs sm:text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase text-[11px]">
-                <tr>
-                  <th className="py-3 px-3">Tanggal / Hari</th>
-                  <th className="py-3 px-3">Kelas</th>
-                  <th className="py-3 px-3">Nama Murid (NISN)</th>
-                  <th className="py-3 px-3">Pelanggaran Terpilih</th>
-                  <th className="py-3 px-3 text-center">Poin</th>
-                  <th className="py-3 px-3">Guru Pelapor</th>
-                  <th className="py-3 px-3 text-center">Foto Bukti</th>
-                  <th className="py-3 px-3 text-center">Cetak</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredLogs.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="py-8 text-center text-slate-400">
-                      Tidak ada rekaman pelanggaran sesuai filter yang dipilih.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredLogs.map(l => {
-                    const studentObj = muridList.find(m => m.nisn === l.nisn);
-                    return (
-                      <tr key={l.id} className="hover:bg-slate-50/70">
-                        <td className="py-3 px-3 whitespace-nowrap">
-                          <div className="font-bold text-slate-800">{l.hari}</div>
-                          <div className="text-[11px] text-slate-400 font-mono">{l.tanggal}</div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className="px-2 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-md text-xs">
-                            {l.kelas}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-bold text-slate-900">{l.namaMurid}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">NISN: {l.nisn}</div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="space-y-0.5 max-w-xs">
-                            {l.pelanggaranList.map((p, idx) => (
-                              <div key={idx} className="text-xs text-slate-700 flex items-center gap-1.5">
-                                <span className="font-mono text-[9px] font-bold bg-slate-100 text-slate-600 px-1 rounded">
-                                  {p.kode}
-                                </span>
-                                <span className="truncate">{p.nama}</span>
-                              </div>
-                            ))}
+          {/* Filter Controls (Kelas, Kelompok Wali, Per Murid) */}
+          <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              
+              {/* Filter 1: Berdasarkan Kelas */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Filter Berdasarkan Kelas
+                </label>
+                <select
+                  value={laporanKelasFilter}
+                  onChange={(e) => setLaporanKelasFilter(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
+                >
+                  <option value="Semua">Semua Kelas (7A - 9H)</option>
+                  {DAFTAR_KELAS.map(k => (
+                    <option key={k} value={k}>Kelas {k}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter 2: Berdasarkan Kelompok Guru Wali */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Filter Kelompok Guru Wali
+                </label>
+                <select
+                  value={laporanWaliFilter}
+                  onChange={(e) => setLaporanWaliFilter(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-600"
+                >
+                  <option value="Semua">Semua Kelompok Guru Wali</option>
+                  {daftarSemuaGuruWali.map((wali, wIdx) => (
+                    <option key={`${wali}_${wIdx}`} value={wali}>
+                      {wali}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filter 3: Per Murid */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Cari Nama atau NISN Siswa
+                </label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={laporanMuridQuery}
+                    onChange={(e) => setLaporanMuridQuery(e.target.value)}
+                    placeholder="Ketik nama atau NISN..."
+                    className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:ring-2 focus:ring-indigo-600"
+                  />
+                </div>
+              </div>
+
+            </div>
+
+            {/* Active Filter Badges */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/80 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1.5 text-slate-500">
+                <span className="font-bold text-slate-700">Filter Aktif:</span>
+                <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 font-semibold text-slate-700">
+                  {laporanKelasFilter === 'Semua' ? 'Seluruh Kelas' : `Kelas ${laporanKelasFilter}`}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 font-semibold text-slate-700">
+                  {laporanWaliFilter === 'Semua' ? 'Seluruh Guru Wali' : `Wali: ${laporanWaliFilter}`}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 font-semibold text-indigo-700">
+                  {laporanHanyaBerpoin ? 'Khusus Siswa Berpoin (> 0 Poin)' : 'Semua Siswa Termasuk 0 Poin'}
+                </span>
+              </div>
+
+              {(laporanKelasFilter !== 'Semua' || laporanWaliFilter !== 'Semua' || laporanMuridQuery || !laporanHanyaBerpoin) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLaporanKelasFilter('Semua');
+                    setLaporanWaliFilter('Semua');
+                    setLaporanMuridQuery('');
+                    setLaporanHanyaBerpoin(true);
+                  }}
+                  className="text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                >
+                  Reset Filter Laporan
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Stats Summary */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+              <span className="text-[10px] text-slate-400 font-bold uppercase block">Siswa dalam Rekap</span>
+              <div className="text-xl font-black text-slate-900 mt-0.5">{rekapSiswaData.length}</div>
+              <span className="text-[10px] text-slate-500 block">
+                {laporanHanyaBerpoin ? 'Siswa Dapat Poin Saja' : 'Total Terdaftar'}
+              </span>
+            </div>
+
+            <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl">
+              <span className="text-[10px] text-rose-600 font-bold uppercase block">Akumulasi Poin</span>
+              <div className="text-xl font-black text-rose-700 mt-0.5">
+                {rekapSiswaData.reduce((sum, r) => sum + r.totalPoin, 0)}
+              </div>
+              <span className="text-[10px] text-rose-500 block">Total Poin Pelanggaran</span>
+            </div>
+
+            <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl">
+              <span className="text-[10px] text-amber-700 font-bold uppercase block">Panggilan Ortu / Skors</span>
+              <div className="text-xl font-black text-amber-900 mt-0.5">
+                {rekapSiswaData.filter(r => r.totalPoin >= 41).length}
+              </div>
+              <span className="text-[10px] text-amber-600 block">Akumulasi &ge; 41 Poin</span>
+            </div>
+
+            <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl">
+              <span className="text-[10px] text-indigo-700 font-bold uppercase block">Status Ketertiban</span>
+              <div className="text-xl font-black text-indigo-900 mt-0.5">
+                {rekapSiswaData.length === 0 ? '100% Bersih' : 'Perlu Pembinaan'}
+              </div>
+              <span className="text-[10px] text-indigo-600 block">
+                {rekapSiswaData.length === 0 ? 'Tidak ada pelanggaran' : 'Sesuai Bab V Tata Tertib'}
+              </span>
+            </div>
+          </div>
+
+          {/* VIEW MODE 1: TABEL REKAPITULASI SISWA BERPOIN */}
+          {laporanViewMode === 'REKAP' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <FileCheck className="w-4 h-4 text-indigo-600" />
+                  Daftar Rekapitulasi Siswa Berdasarkan Akumulasi Poin Pelanggaran:
+                </span>
+                <span className="text-[11px] text-slate-500 font-mono">
+                  Menampilkan {rekapSiswaData.length} data
+                </span>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase text-[11px]">
+                    <tr>
+                      <th className="py-3 px-3 text-center w-10">No</th>
+                      <th className="py-3 px-3">Identitas Siswa (NISN)</th>
+                      <th className="py-3 px-3 text-center w-14">Kelas</th>
+                      <th className="py-3 px-3">Kelompok Guru Wali</th>
+                      <th className="py-3 px-3 text-center w-16">Frekuensi</th>
+                      <th className="py-3 px-3">Ringkasan Pelanggaran</th>
+                      <th className="py-3 px-3 text-center w-24">Total Poin</th>
+                      <th className="py-3 px-3">Ketentuan Sanksi & Tindak Lanjut</th>
+                      <th className="py-3 px-3 text-center w-16">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {rekapSiswaData.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-12 text-center text-slate-400">
+                          <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto mb-2 text-emerald-600">
+                            <CheckCircle2 className="w-6 h-6" />
                           </div>
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <span className={`inline-block px-2.5 py-0.5 rounded-full font-mono font-bold text-xs ${
-                            l.totalPoin >= 50 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-800'
-                          }`}>
-                            +{l.totalPoin}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-xs text-slate-600">
-                          <div className="font-semibold">{l.guruNama}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">{l.guruNip}</div>
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          {l.fotoBuktiUrl ? (
-                            <a
-                              href={l.fotoBuktiUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline font-semibold"
-                            >
-                              Lihat Foto
-                            </a>
-                          ) : (
-                            <span className="text-slate-400 text-xs">-</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          {studentObj && onOpenReportPrint && (
-                            <button
-                              onClick={() => onOpenReportPrint(studentObj)}
-                              className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs"
-                              title="Cetak Berita Acara Pelanggaran Siswa"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <p className="font-bold text-slate-700 text-sm">
+                            Tidak Ada Siswa yang Memperoleh Poin Pelanggaran
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {laporanHanyaBerpoin
+                              ? 'Semua siswa pada filter ini berdisiplin baik (0 poin) sehingga tidak dicantumkan.'
+                              : 'Tidak ada data siswa ditemukan untuk kriteria filter ini.'}
+                          </p>
                         </td>
                       </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                    ) : (
+                      rekapSiswaData.map((item, idx) => (
+                        <tr key={`${item.murid.id || item.murid.nisn || 'rek'}_${idx}`} className="hover:bg-slate-50/70">
+                          <td className="py-3 px-3 text-center font-bold text-slate-500">
+                            {idx + 1}
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <span>{item.murid.nama}</span>
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono">
+                                {item.murid.jenisKelamin}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              NISN: {item.murid.nisn} &bull; NIS: {item.murid.nis}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-bold rounded-lg text-xs">
+                              {item.murid.kelas}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-xs text-slate-700">
+                            <div className="font-semibold">{item.murid.guruWali || item.murid.waliKelas || '-'}</div>
+                            <div className="text-[10px] text-slate-400">Wali: {item.murid.waliKelas}</div>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 font-bold text-xs">
+                              {item.totalKasus}x
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <p className="text-xs text-slate-700 line-clamp-2 max-w-xs leading-relaxed" title={item.ringkasanPelanggaran}>
+                              {item.ringkasanPelanggaran}
+                            </p>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`inline-block px-3 py-1 rounded-xl font-mono font-black text-xs sm:text-sm ${
+                              item.totalPoin >= 61
+                                ? 'bg-red-600 text-white shadow-xs'
+                                : item.totalPoin >= 41
+                                ? 'bg-rose-500 text-white'
+                                : item.totalPoin >= 21
+                                ? 'bg-amber-100 text-amber-900 font-bold'
+                                : 'bg-slate-100 text-slate-800'
+                            }`}>
+                              +{item.totalPoin} Poin
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-xs">
+                            <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-semibold border ${item.sanksi.badgeColor}`}>
+                              {item.sanksi.sanksi}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            {onOpenReportPrint && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenReportPrint(item.murid)}
+                                className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 rounded-lg text-xs transition-colors"
+                                title="Cetak Berita Acara / Surat Pemanggilan Siswa Ini"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  {rekapSiswaData.length > 0 && (
+                    <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold text-xs text-slate-800">
+                      <tr>
+                        <td colSpan={6} className="py-3 px-3 text-right">
+                          Total Akumulasi Poin Siswa Melanggar:
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-black text-sm text-rose-700">
+                          {rekapSiswaData.reduce((s, r) => s + r.totalPoin, 0)} Poin
+                        </td>
+                        <td colSpan={2} className="py-3 px-3 text-slate-500 font-normal">
+                          {rekapSiswaData.length} Siswa Terdaftar dalam Rekap
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+
+              {/* Action Banner below table */}
+              <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <Printer className="w-4 h-4 text-indigo-700 shrink-0" />
+                  <span className="text-indigo-950 font-semibold">
+                    Ingin mencetak laporan rekapitulasi di atas lengkap dengan Kop Surat Lembaga & tanda tangan Kepala Sekolah?
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRekapPrintModalOpen(true)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Buka Pratinjau & Cetak Resmi</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW MODE 2: JURNAL RIWAYAT LOG KEJADIAN LENGKAP */}
+          {laporanViewMode === 'LOGS' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-slate-600" />
+                  Jurnal Log Kronologis Kejadian Pelanggaran:
+                </span>
+                <span className="text-[11px] text-slate-500 font-mono">
+                  Menampilkan {filteredLogs.length} transaksi log
+                </span>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold uppercase text-[11px]">
+                    <tr>
+                      <th className="py-3 px-3">Tanggal / Hari</th>
+                      <th className="py-3 px-3">Kelas</th>
+                      <th className="py-3 px-3">Nama Murid (NISN)</th>
+                      <th className="py-3 px-3">Pelanggaran Terpilih</th>
+                      <th className="py-3 px-3 text-center">Poin</th>
+                      <th className="py-3 px-3">Guru Pelapor</th>
+                      <th className="py-3 px-3 text-center">Foto Bukti</th>
+                      <th className="py-3 px-3 text-center">Cetak</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-slate-400">
+                          Tidak ada rekaman pelanggaran sesuai filter yang dipilih.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredLogs.map((l, lIdx) => {
+                        const studentObj = muridList.find(m => m.nisn === l.nisn);
+                        return (
+                          <tr key={`${l.id || 'log'}_${lIdx}`} className="hover:bg-slate-50/70">
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <div className="font-bold text-slate-800">{l.hari}</div>
+                              <div className="text-[11px] text-slate-400 font-mono">{l.tanggal}</div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="px-2 py-0.5 bg-blue-50 text-blue-700 font-bold rounded-md text-xs">
+                                {l.kelas}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900">{l.namaMurid}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">NISN: {l.nisn}</div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="space-y-0.5 max-w-xs">
+                                {l.pelanggaranList.map((p, idx) => (
+                                  <div key={`${p.id || p.kode || 'pel'}_${idx}`} className="text-xs text-slate-700 flex items-center gap-1.5">
+                                    <span className="font-mono text-[9px] font-bold bg-slate-100 text-slate-600 px-1 rounded">
+                                      {p.kode}
+                                    </span>
+                                    <span className="truncate">{p.nama}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span className={`inline-block px-2.5 py-0.5 rounded-full font-mono font-bold text-xs ${
+                                l.totalPoin >= 50 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-800'
+                              }`}>
+                                +{l.totalPoin}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-xs text-slate-600">
+                              <div className="font-semibold">{l.guruNama}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{l.guruNip}</div>
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              {l.fotoBuktiUrl ? (
+                                <a
+                                  href={l.fotoBuktiUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline font-semibold"
+                                >
+                                  Lihat Foto
+                                </a>
+                              ) : (
+                                <span className="text-slate-400 text-xs">-</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              {studentObj && onOpenReportPrint && (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenReportPrint(studentObj)}
+                                  className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs"
+                                  title="Cetak Berita Acara Pelanggaran Siswa"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
         </div>
       )}
@@ -1789,7 +2206,7 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                     const isB = p.kode.trim().toUpperCase().startsWith('B') || p.komponen === 'Kerajinan';
                     
                     return (
-                      <tr key={p.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                      <tr key={`${p.id || p.kode || 'pel'}_${idx}`} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-3 px-3 text-center">
                           <span className={`inline-block px-2.5 py-1 rounded-lg font-mono font-black text-xs border ${
                             isA 
@@ -2163,8 +2580,8 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
                     className="w-full px-3 py-2 border rounded-xl text-xs"
                   />
                   <datalist id="guruWaliModalOptions">
-                    {daftarSemuaGuruWali.map(gw => (
-                      <option key={gw} value={gw} />
+                    {daftarSemuaGuruWali.map((gw, gwIdx) => (
+                      <option key={`${gw}_${gwIdx}`} value={gw} />
                     ))}
                   </datalist>
                 </div>
@@ -2373,6 +2790,21 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL PRATINJAU CETAK REKAPITULASI PELANGGARAN RESMI */}
+      {/* ========================================================= */}
+      {rekapPrintModalOpen && (
+        <RekapPrintModal
+          isOpen={rekapPrintModalOpen}
+          onClose={() => setRekapPrintModalOpen(false)}
+          pengaturan={pengaturan}
+          filterKelas={laporanKelasFilter}
+          filterWali={laporanWaliFilter}
+          hanyaSiswaBerpoin={laporanHanyaBerpoin}
+          rekapItems={rekapSiswaData}
+        />
       )}
 
     </div>

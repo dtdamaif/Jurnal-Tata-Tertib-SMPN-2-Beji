@@ -141,6 +141,7 @@ export async function fetchLiveMurid(knownGuru: Guru[] = []): Promise<{ muridLis
   try {
     const { rows, source } = await fetchGvizSheet('Murid');
     const muridList: Murid[] = [];
+    const usedIds = new Set<string>();
 
     // Buat lookup guru wali berdasarkan kelas
     const waliKelasMap: Record<string, string> = {};
@@ -171,8 +172,24 @@ export async function fetchLiveMurid(knownGuru: Guru[] = []): Promise<{ muridLis
       const finalWaliKelas = rawWali || waliKelasMap[rawKelas] || fallbackWali;
       const finalGuruWali = rawGuruWali || finalWaliKelas;
 
+      // Hasilkan ID unik agar tidak ada duplikasi ID (seperti MUR-6212)
+      let finalId = rawId;
+      if (!finalId) {
+        if (rawNisn) {
+          finalId = `MUR-${rawNisn}`;
+        } else if (rawNis) {
+          finalId = `MUR-${rawNis}`;
+        } else {
+          finalId = `MUR-${i + 1}`;
+        }
+      }
+      if (usedIds.has(finalId)) {
+        finalId = `${finalId}_${i + 1}`;
+      }
+      usedIds.add(finalId);
+
       muridList.push({
-        id: rawId || (rawNis ? `MUR-${rawNis}` : `MUR-${i + 1}`),
+        id: finalId,
         nisn: rawNisn,
         nis: rawNis,
         nama: rawNama,
@@ -483,17 +500,26 @@ export async function sendViolationToGAS(
 
 /**
  * Tarik Pengaturan Lembaga & Kop Surat Resmi Online
- * 1. Coba dari server online /api/settings
- * 2. Coba dari Google Spreadsheet tab "Pengaturan"
+ * 1. Coba dari server online /api/settings atau /api/db
+ * 2. Coba dari Google Spreadsheet tab "Pengaturan" (GVIZ)
  */
-export async function fetchLivePengaturan(): Promise<{ pengaturan?: PengaturanLembaga; source: 'SERVER' | 'SPREADSHEET' | 'NONE' }> {
+export async function fetchLivePengaturan(): Promise<{ 
+  pengaturan?: PengaturanLembaga; 
+  gasWebAppUrl?: string;
+  source: 'SERVER' | 'SPREADSHEET' | 'NONE' 
+}> {
   // 1. Coba dari server endpoint /api/settings
   try {
     const res = await fetch('/api/settings', { cache: 'no-cache' });
     if (res.ok) {
       const data = await res.json();
-      if (data.success && data.settings && data.settings.namaSekolah) {
-        return { pengaturan: data.settings as PengaturanLembaga, source: 'SERVER' };
+      if (data.success && data.settings && (data.settings.namaSekolah || data.settings.npsn)) {
+        const foundUrl = data.gasWebAppUrl || data.settings.gasWebAppUrl || '';
+        return { 
+          pengaturan: data.settings as PengaturanLembaga, 
+          gasWebAppUrl: foundUrl,
+          source: 'SERVER' 
+        };
       }
     }
   } catch {
@@ -512,8 +538,12 @@ export async function fetchLivePengaturan(): Promise<{ pengaturan?: PengaturanLe
           parsed[k] = v;
         }
       });
-      if (parsed.namaSekolah) {
-        return { pengaturan: parsed as PengaturanLembaga, source: 'SPREADSHEET' };
+      if (parsed.namaSekolah || parsed.npsn || parsed.gasWebAppUrl) {
+        return { 
+          pengaturan: parsed as PengaturanLembaga, 
+          gasWebAppUrl: parsed.gasWebAppUrl || '',
+          source: 'SPREADSHEET' 
+        };
       }
     }
   } catch (err) {
@@ -525,22 +555,27 @@ export async function fetchLivePengaturan(): Promise<{ pengaturan?: PengaturanLe
 
 /**
  * Simpan Pengaturan Lembaga & Kop Surat Resmi Online
- * 1. Simpan ke Server (/api/settings)
- * 2. Simpan ke Google Apps Script Web App (jika URL terisi) untuk update sheet "Pengaturan"
+ * 1. Simpan ke Server (/api/settings dan /api/db/pengaturan)
+ * 2. Simpan URL Web App ke (/api/db/gas-url)
+ * 3. Simpan ke Google Apps Script Web App (jika URL terisi) untuk update sheet "Pengaturan"
  */
 export async function saveOnlinePengaturan(
   settings: PengaturanLembaga,
   gasWebAppUrl?: string
-): Promise<{ success: boolean; message: string; gasSynced?: boolean }> {
+): Promise<{ success: boolean; message: string; gasSynced?: boolean; gasWebAppUrl?: string }> {
   let serverSaved = false;
   let gasSynced = false;
+  const activeGasUrl = (gasWebAppUrl || settings.gasWebAppUrl || '').trim();
 
   // 1. Simpan ke Cloud Server (/api/settings)
   try {
     const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings, gasWebAppUrl })
+      body: JSON.stringify({ 
+        settings: { ...settings, gasWebAppUrl: activeGasUrl }, 
+        gasWebAppUrl: activeGasUrl 
+      })
     });
     if (res.ok) {
       const resJson = await res.json();
@@ -551,15 +586,28 @@ export async function saveOnlinePengaturan(
     console.warn('Server save warning:', err);
   }
 
-  // 2. Jika ada gasWebAppUrl dan belum ter-sync lewat server, coba kirim langsung dari client
-  if (gasWebAppUrl && gasWebAppUrl.trim().startsWith('http') && !gasSynced) {
+  // 2. Simpan URL Web App secara terpisah ke /api/db/gas-url agar selalu sinkron online
+  if (activeGasUrl) {
     try {
-      const gasRes = await fetch(gasWebAppUrl, {
+      await fetch('/api/db/gas-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: activeGasUrl })
+      });
+    } catch (urlErr) {
+      console.warn('Sync /api/db/gas-url note:', urlErr);
+    }
+  }
+
+  // 3. Jika ada activeGasUrl dan belum ter-sync lewat server, coba kirim langsung dari client
+  if (activeGasUrl && activeGasUrl.startsWith('http') && !gasSynced) {
+    try {
+      const gasRes = await fetch(activeGasUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           action: 'savePengaturan',
-          payload: settings
+          payload: { ...settings, gasWebAppUrl: activeGasUrl }
         })
       });
       if (gasRes.ok) {
@@ -573,22 +621,29 @@ export async function saveOnlinePengaturan(
 
   // Simpan ke localStorage sebagai cache lokal
   try {
-    localStorage.setItem('smpn2beji_pengaturan', JSON.stringify(settings));
+    localStorage.setItem('smpn2beji_pengaturan', JSON.stringify({ ...settings, gasWebAppUrl: activeGasUrl }));
+    if (activeGasUrl) {
+      localStorage.setItem('smpn2beji_gas_url', activeGasUrl);
+    }
   } catch {}
 
   if (serverSaved || gasSynced) {
-    const detail = gasSynced ? 'Tersimpan online di Cloud Server dan Google Spreadsheet!' : 'Tersimpan online di Cloud Server.';
+    const detail = gasSynced 
+      ? 'Tersimpan online di Cloud Server dan Google Spreadsheet!' 
+      : 'Tersimpan online di Cloud Server untuk semua komputer.';
     return {
       success: true,
-      message: `Berhasil! Pengaturan dan Kop Surat resmi telah ${detail}`,
-      gasSynced
+      message: `Berhasil! Pengaturan dan URL Web App telah ${detail}`,
+      gasSynced,
+      gasWebAppUrl: activeGasUrl
     };
   }
 
   return {
     success: true,
     message: 'Pengaturan dan Kop tersimpan di penyimpanan browser lokal.',
-    gasSynced: false
+    gasSynced: false,
+    gasWebAppUrl: activeGasUrl
   };
 }
 

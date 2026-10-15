@@ -7,7 +7,8 @@ import {
   INITIAL_ADMINS, 
   INITIAL_PELANGGARAN_REF, 
   INITIAL_LOGS, 
-  INITIAL_PENGATURAN 
+  INITIAL_PENGATURAN,
+  GAS_CONFIG
 } from './src/data/initialData';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -28,16 +29,27 @@ interface CentralDatabase {
 
 // Inisialisasi Database Terpusat di Server
 function getDatabase(): CentralDatabase {
+  let savedSettingsGasUrl = '';
+  const settingsPath = path.resolve(__dirname, 'server-settings.json');
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const sContent = fs.readFileSync(settingsPath, 'utf-8');
+      const sData = JSON.parse(sContent);
+      if (sData.gasWebAppUrl) savedSettingsGasUrl = sData.gasWebAppUrl;
+    } catch {}
+  }
+
   if (fs.existsSync(DB_FILE_PATH)) {
     try {
       const content = fs.readFileSync(DB_FILE_PATH, 'utf-8');
       const data = JSON.parse(content);
+      const activeUrl = data.gasWebAppUrl || data.pengaturan?.gasWebAppUrl || savedSettingsGasUrl || GAS_CONFIG?.webAppUrl || '';
       return {
         admins: data.admins || INITIAL_ADMINS,
         refPelanggaran: data.refPelanggaran || INITIAL_PELANGGARAN_REF,
         logs: data.logs || INITIAL_LOGS,
         pengaturan: data.pengaturan || INITIAL_PENGATURAN,
-        gasWebAppUrl: data.gasWebAppUrl || '',
+        gasWebAppUrl: activeUrl,
         lastUpdated: data.lastUpdated || new Date().toISOString()
       };
     } catch (e) {
@@ -46,12 +58,13 @@ function getDatabase(): CentralDatabase {
   }
 
   // Jika file belum ada, buat database awal
+  const fallbackUrl = savedSettingsGasUrl || GAS_CONFIG?.webAppUrl || 'https://script.google.com/macros/s/AKfycbx4fpy1xSBJuh8HSot5OchwAuV-sTAPvtLOiQOT7AZL-sOPd-CQ4Tzp853BBSkQ0mE/exec';
   const initialDb: CentralDatabase = {
     admins: INITIAL_ADMINS,
     refPelanggaran: INITIAL_PELANGGARAN_REF,
     logs: INITIAL_LOGS,
     pengaturan: INITIAL_PENGATURAN,
-    gasWebAppUrl: '',
+    gasWebAppUrl: fallbackUrl,
     lastUpdated: new Date().toISOString()
   };
 
@@ -67,10 +80,13 @@ function getDatabase(): CentralDatabase {
 function saveDatabase(db: CentralDatabase) {
   db.lastUpdated = new Date().toISOString();
   try {
+    if (db.gasWebAppUrl && db.pengaturan) {
+      db.pengaturan.gasWebAppUrl = db.gasWebAppUrl;
+    }
     fs.writeFileSync(DB_FILE_PATH, JSON.stringify(db, null, 2), 'utf-8');
     if (db.pengaturan) {
       const settingsPath = path.resolve(__dirname, 'server-settings.json');
-      fs.writeFileSync(settingsPath, JSON.stringify(db.pengaturan, null, 2), 'utf-8');
+      fs.writeFileSync(settingsPath, JSON.stringify({ ...db.pengaturan, gasWebAppUrl: db.gasWebAppUrl }, null, 2), 'utf-8');
     }
   } catch (err) {
     console.error('Error writing database to disk:', err);
@@ -251,18 +267,28 @@ async function startServer() {
     }
     const db = getDatabase();
     db.pengaturan = { ...db.pengaturan, ...settings };
+    if (req.body.gasWebAppUrl || settings.gasWebAppUrl) {
+      db.gasWebAppUrl = String(req.body.gasWebAppUrl || settings.gasWebAppUrl).trim();
+    }
+    if (db.gasWebAppUrl) {
+      db.pengaturan.gasWebAppUrl = db.gasWebAppUrl;
+    }
     saveDatabase(db);
 
     let gasResult = null;
     if (db.gasWebAppUrl) {
-      gasResult = await forwardToGAS(db.gasWebAppUrl, 'savePengaturan', db.pengaturan);
+      gasResult = await forwardToGAS(db.gasWebAppUrl, 'savePengaturan', {
+        ...db.pengaturan,
+        gasWebAppUrl: db.gasWebAppUrl
+      });
     }
 
     return res.json({ 
       success: true, 
       message: 'Pengaturan lembaga dan kop surat resmi berhasil disimpan online!',
       data: db.pengaturan,
-      gasSynced: !!gasResult?.success
+      gasSynced: !!gasResult?.success,
+      gasWebAppUrl: db.gasWebAppUrl
     });
   });
 
@@ -310,7 +336,12 @@ async function startServer() {
   app.post('/api/db/gas-url', async (req, res) => {
     const { url } = req.body;
     const db = getDatabase();
-    db.gasWebAppUrl = (url || '').trim();
+    if (url !== undefined && url !== null) {
+      db.gasWebAppUrl = String(url).trim();
+    }
+    if (db.gasWebAppUrl && db.pengaturan) {
+      db.pengaturan.gasWebAppUrl = db.gasWebAppUrl;
+    }
     saveDatabase(db);
 
     let testConnected = false;
@@ -322,10 +353,15 @@ async function startServer() {
         const testRes = await fetch(pingUrl, { redirect: 'follow' });
         testConnected = testRes.ok;
         if (testConnected) {
-          message = 'URL Google Apps Script berhasil terhubung dan tersimpan online!';
+          message = 'URL Google Apps Script berhasil terhubung dan tersimpan online di server & spreadsheet!';
+          // Simpan juga ke Google Spreadsheet tab Pengaturan
+          await forwardToGAS(db.gasWebAppUrl, 'savePengaturan', {
+            ...db.pengaturan,
+            gasWebAppUrl: db.gasWebAppUrl
+          });
         }
       } catch (err: any) {
-        message = 'URL disimpan, namun uji koneksi: ' + (err?.message || err);
+        message = 'URL disimpan di server, namun uji koneksi: ' + (err?.message || err);
       }
     }
 
@@ -380,28 +416,40 @@ async function startServer() {
 
   app.get('/api/settings', (_req, res) => {
     const db = getDatabase();
-    return res.json({ success: true, source: 'SERVER_DB', settings: db.pengaturan });
+    return res.json({ 
+      success: true, 
+      source: 'SERVER_DB', 
+      settings: { ...db.pengaturan, gasWebAppUrl: db.gasWebAppUrl },
+      gasWebAppUrl: db.gasWebAppUrl 
+    });
   });
 
   app.post('/api/settings', async (req, res) => {
     const settings = req.body.settings || req.body;
     const db = getDatabase();
     db.pengaturan = { ...db.pengaturan, ...settings };
-    if (req.body.gasWebAppUrl) {
-      db.gasWebAppUrl = req.body.gasWebAppUrl;
+    if (req.body.gasWebAppUrl || settings.gasWebAppUrl) {
+      db.gasWebAppUrl = String(req.body.gasWebAppUrl || settings.gasWebAppUrl).trim();
+    }
+    if (db.gasWebAppUrl) {
+      db.pengaturan.gasWebAppUrl = db.gasWebAppUrl;
     }
     saveDatabase(db);
 
     let gasSynced = false;
     if (db.gasWebAppUrl) {
-      const gRes = await forwardToGAS(db.gasWebAppUrl, 'savePengaturan', db.pengaturan);
+      const gRes = await forwardToGAS(db.gasWebAppUrl, 'savePengaturan', {
+        ...db.pengaturan,
+        gasWebAppUrl: db.gasWebAppUrl
+      });
       gasSynced = !!gRes?.success;
     }
 
     return res.json({
       success: true,
       message: 'Pengaturan dan Kop Surat resmi berhasil disimpan online!',
-      gasSynced
+      gasSynced,
+      gasWebAppUrl: db.gasWebAppUrl
     });
   });
 

@@ -89,6 +89,7 @@ export interface PengaturanLembaga {
   namaPelapor: string; // Koordinator Tatib / BK
   nipPelapor: string;
   jabatanPelapor: string;
+  gasWebAppUrl?: string; // URL Deployment Web App Google Apps Script
 }
 
 /**
